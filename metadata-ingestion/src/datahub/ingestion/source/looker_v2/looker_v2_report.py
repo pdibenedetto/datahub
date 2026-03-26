@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 from datahub.ingestion.source.state.stale_entity_removal_handler import (
     StaleEntityRemovalSourceReport,
 )
-from datahub.utilities.lossy_collections import LossyDict, LossyList, LossySet
+from datahub.utilities.lossy_collections import LossyList, LossySet
 
 
 @dataclass
@@ -94,12 +94,6 @@ class LookerV2SourceReport(StaleEntityRemovalSourceReport):
     charts_with_activity: LossySet[str] = field(default_factory=LossySet)
     query_latency: Dict[str, Any] = field(default_factory=dict)
     user_resolution_latency: Dict[str, Any] = field(default_factory=dict)
-
-    # =========== API Telemetry ===========
-    # Top N slowest API calls (N configurable via DATAHUB_LOOKER_API_TELEMETRY_TOP_K)
-    api_call_latencies: LossyDict[str, float] = field(default_factory=LossyDict)
-    api_call_counts: Dict[str, int] = field(default_factory=dict)
-    api_total_time_seconds: float = 0.0
 
     # =========== API Performance ===========
     api_calls_by_endpoint: Dict[str, int] = field(default_factory=dict)
@@ -193,18 +187,6 @@ class LookerV2SourceReport(StaleEntityRemovalSourceReport):
         )
         self.fields_added_by_refinement += fields_added
         self.fields_modified_by_refinement += fields_modified
-
-    def update_api_telemetry(
-        self,
-        latencies: Dict[str, float],
-        counts: Dict[str, int],
-        total_time: float,
-    ) -> None:
-        """Update API telemetry from the telemetry tracker."""
-        for key, value in latencies.items():
-            self.api_call_latencies[key] = value
-        self.api_call_counts.update(counts)
-        self.api_total_time_seconds = total_time
 
     def compute_stats(self) -> None:
         """Compute derived statistics."""
