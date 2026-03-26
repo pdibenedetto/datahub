@@ -241,6 +241,19 @@ looker_common = {
     "deepmerge>=1.1.1,<3.0.0",
 }
 
+looker_v2_common = {
+    # Looker Python SDK — API 4.0
+    "looker-sdk>=23.0.0,<26.0.0",
+    # LookML parser
+    "lkml>=1.3.4,<2.0.0",
+    *sqlglot_lib,
+    # Git cloning for LookML repos
+    "GitPython>2,<4.0.0",
+    # Jinja2 for LookMLSQLResolver (replaces python-liquid transformer pipeline)
+    "jinja2>=3.0.0",
+    "deepmerge>=1.1.1,<3.0.0",
+}
+
 bigquery_common = {
     # Google cloud logging library
     "google-cloud-logging<4.0.0",
@@ -667,6 +680,7 @@ plugins: Dict[str, Set[str]] = {
     | {"requests<3.0.0", "JPype1<2.0.0", "jdk4py>=21.0,<22.0"},
     "ldap": {"python-ldap>=2.4,<4.0.0"},
     "looker": looker_common,
+    "looker-v2": looker_v2_common,
     "lookml": looker_common,
     "metabase": {"requests<3.0.0"} | sqlglot_lib,
     "mlflow": {
@@ -1046,6 +1060,7 @@ entry_points = {
         "kafka-connect = datahub.ingestion.source.kafka_connect.kafka_connect:KafkaConnectSource",
         "ldap = datahub.ingestion.source.ldap:LDAPSource",
         "looker = datahub.ingestion.source.looker.looker_source:LookerDashboardSource",
+        "looker-v2 = datahub.ingestion.source.looker_v2.looker_v2_source:LookerV2Source",
         "lookml = datahub.ingestion.source.looker.lookml_source:LookMLSource",
         "datahub-gc = datahub.ingestion.source.gc.datahub_gc:DataHubGcSource",
         "datahub-debug = datahub.ingestion.source.debug.datahub_debug:DataHubDebugSource",
