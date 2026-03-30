@@ -140,7 +140,7 @@ def parse_custom_sql(
     # Blank-line-separated SELECTs appear after DROP TABLE stripping removes the DDL
     # between statements, leaving no semicolons. Insert them so the multi-statement
     # check below treats them correctly.
-    normalized = re.sub(r"\n\n(\s*SELECT\b)", r";\n\n\1", query, flags=re.IGNORECASE)
+    normalized = re.sub(r"\n{2,}(\s*SELECT\b)", r";\n\n\1", query, flags=re.IGNORECASE)
 
     if ";" in normalized:
         result = create_lineage_from_sql_statements(
