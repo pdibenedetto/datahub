@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 
 from looker_sdk.sdk.api40.models import FolderBase
 
-from datahub.ingestion.source.looker_v2.view_discovery import (
+from datahub.ingestion.source.looker_v2.lookml_view_discovery import (
     ViewDiscovery,
     extract_explore_views_from_api,
 )

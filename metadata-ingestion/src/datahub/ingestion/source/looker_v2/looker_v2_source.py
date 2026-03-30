@@ -75,29 +75,29 @@ from datahub.ingestion.source.looker.looker_common import (
     get_urn_looker_element_id,
 )
 from datahub.ingestion.source.looker.looker_lib_wrapper import LookerAPI
-from datahub.ingestion.source.looker_v2 import v2_usage as looker_usage
+from datahub.ingestion.source.looker_v2 import looker_v2_usage as looker_usage
 from datahub.ingestion.source.looker_v2.looker_v2_config import (
     LookerConnectionDefinition,
     LookerV2Config,
     LookerV2GitInfo,
 )
+from datahub.ingestion.source.looker_v2.looker_v2_pdt_graph_parser import (
+    PDTDependencyEdge,
+    parse_pdt_graph,
+)
 from datahub.ingestion.source.looker_v2.looker_v2_report import LookerV2SourceReport
+from datahub.ingestion.source.looker_v2.lookml_manifest_parser import ManifestParser
 from datahub.ingestion.source.looker_v2.lookml_parser import (
     LookMLParser,
     ParsedView,
 )
-from datahub.ingestion.source.looker_v2.manifest_parser import ManifestParser
-from datahub.ingestion.source.looker_v2.pdt_graph_parser import (
-    PDTDependencyEdge,
-    parse_pdt_graph,
-)
-from datahub.ingestion.source.looker_v2.refinement_handler import (
-    RefinementHandler,
-    merge_additive_parameters,
-)
-from datahub.ingestion.source.looker_v2.view_discovery import (
+from datahub.ingestion.source.looker_v2.lookml_view_discovery import (
     ViewDiscovery,
     ViewDiscoveryResult,
+)
+from datahub.ingestion.source.looker_v2.lookml_view_refinement_handler import (
+    RefinementHandler,
+    merge_additive_parameters,
 )
 from datahub.ingestion.source.state.stale_entity_removal_handler import (
     StaleEntityRemovalHandler,
