@@ -82,11 +82,15 @@ def test_remove_tsql_control_statements_select_into_global_temp():
     assert "FROM dbo.SourceTable" in actual
 
 
-def test_remove_tsql_control_statements_only_noise_returns_empty():
-    # A query consisting entirely of T-SQL noise with no SELECT should return empty string
-    query = "USE SampleDB\nGO\nSET NOCOUNT ON\n"
+def test_tsql_cleanup_requires_special_chars_expansion_first():
+    # USE is line-anchored — it only matches after #(lf) is expanded to a real newline.
+    # This documents the required call order: remove_special_characters before
+    # remove_tsql_control_statements (the ordering bug that was the root cause).
+    query = "USE SampleDB#(lf)SELECT col FROM dbo.MyTable"
+    query = native_sql_parser.remove_special_characters(query)
     actual = native_sql_parser.remove_tsql_control_statements(query)
-    assert actual == ""
+    assert "USE SampleDB" not in actual
+    assert "SELECT col FROM dbo.MyTable" in actual
 
 
 def test_remove_tsql_control_statements_combined():

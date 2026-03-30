@@ -362,13 +362,6 @@ class AbstractLineage(ABC):
             )
         )
 
-        logger.debug(
-            "parse_custom_sql: table=%s, platform=%s, db=%s, schema=%s",
-            self.table.full_name,
-            platform_pair.datahub_data_platform_name,
-            database,
-            schema,
-        )
         # remove_special_characters must run first to expand #(lf) → \n before
         # remove_drop_statement applies line-anchored patterns (USE, GO, SET, etc.)
         query = native_sql_parser.remove_special_characters(query)
@@ -387,10 +380,6 @@ class AbstractLineage(ABC):
         )
 
         if parsed_result is None:
-            logger.debug(
-                "parse_custom_sql returned None for table %s",
-                self.table.full_name,
-            )
             self.reporter.info(
                 title=Constant.SQL_PARSING_FAILURE,
                 message="Fail to parse native sql present in PowerBI M-Query",
@@ -399,11 +388,6 @@ class AbstractLineage(ABC):
             return Lineage.empty()
 
         if parsed_result.debug_info and parsed_result.debug_info.table_error:
-            logger.debug(
-                "parse_custom_sql table_error for table %s: %s",
-                self.table.full_name,
-                parsed_result.debug_info.table_error,
-            )
             self.reporter.warning(
                 title=Constant.SQL_PARSING_FAILURE,
                 message="Fail to parse native sql present in PowerBI M-Query",
@@ -1065,18 +1049,8 @@ class MSSqlLineage(TwoStepDataAccessPattern):
         record_fields = _get_record_args(node_map, data_access_func_detail.arg_list)
         query: Optional[str] = record_fields.get("Query")
         if query:
-            logger.debug(
-                "MSSqlLineage inline query found for table %s, "
-                "enable_advance_lineage_sql_construct=%s",
-                self.table.full_name,
-                self.config.enable_advance_lineage_sql_construct,
-            )
             if self.config.enable_advance_lineage_sql_construct is False:
                 # Use previous parser to generate URN to keep backward compatibility
-                logger.debug(
-                    "MSSqlLineage using old parser for table %s — T-SQL cleanup will NOT run",
-                    self.table.full_name,
-                )
                 return Lineage(
                     upstreams=self.create_urn_using_old_parser(
                         query=query,
@@ -1094,10 +1068,6 @@ class MSSqlLineage(TwoStepDataAccessPattern):
             )
 
         # It is a regular case of MS-SQL
-        logger.debug(
-            "MSSqlLineage no inline query for table %s — using structural pattern",
-            self.table.full_name,
-        )
         return self.two_level_access_pattern(data_access_func_detail)
 
 
