@@ -265,7 +265,7 @@ class LookerV2Source(TestableSource, StatefulIngestionSourceBase):
         self._view_discovery_result: Optional[ViewDiscoveryResult] = None
         self._parsed_views: Dict[str, ParsedView] = {}
         self._model_registry: Dict[str, LookmlModel] = {}
-        self._folder_registry: Dict[str, Folder] = {}
+        self._folder_registry: Dict[str, FolderBase] = {}
 
         # Explore cache: avoids duplicate API calls between view discovery and explore processing
         self._explore_cache: Dict[Tuple[str, str], LookmlModelExplore] = {}
@@ -571,8 +571,26 @@ class LookerV2Source(TestableSource, StatefulIngestionSourceBase):
         """Bulk fetch all reference data upfront."""
         logger.info("Populating registries...")
 
-        # Note: Folders are fetched on-demand when processing dashboards
-        # The LookerAPI wrapper doesn't have an all_folders method
+        # Bulk pre-fetch all folders to avoid per-dashboard API calls
+        try:
+            all_folders = self.looker_api.all_folders(
+                fields=[
+                    "id",
+                    "name",
+                    "parent_id",
+                    "is_personal",
+                    "is_personal_descendant",
+                ]
+            )
+            for folder in all_folders:
+                if folder.id:
+                    self._folder_registry[folder.id] = folder
+            self.reporter.folder_registry_size = len(self._folder_registry)
+            logger.info(f"Pre-fetched {len(self._folder_registry)} folders")
+        except SDKError as e:
+            logger.warning(
+                f"Failed to pre-fetch folders (will fall back to on-demand): {e}"
+            )
 
         # Fetch all models
         try:
@@ -1206,6 +1224,31 @@ class LookerV2Source(TestableSource, StatefulIngestionSourceBase):
             instance=self.config.platform_instance,
         )
 
+    def _get_folder_ancestors(self, folder_id: str) -> List[FolderBase]:
+        """Get ancestor folders using the pre-fetched registry when available."""
+        if self._folder_registry:
+            # Walk up the tree using the registry
+            ancestors: List[FolderBase] = []
+            current_folder = self._folder_registry.get(folder_id)
+            if current_folder is None:
+                return []
+            visited: set = set()
+            parent_id = current_folder.parent_id
+            while parent_id and parent_id not in visited:
+                visited.add(parent_id)
+                parent = self._folder_registry.get(parent_id)
+                if parent is None:
+                    break
+                ancestors.insert(0, parent)
+                parent_id = parent.parent_id
+            return ancestors
+        # Fall back to API when registry is empty (e.g., pre-fetch failed)
+        try:
+            return list(self.looker_api.folder_ancestors(folder_id=folder_id))
+        except SDKError as e:
+            logger.debug(f"Failed to fetch folder ancestors for {folder_id}: {e}")
+            return []
+
     def _get_folder_container(self, folder: Union[FolderBase, Folder]) -> List[Entity]:
         """Get or create folder container entity with full ancestor chain."""
         if not folder.id:
@@ -1213,24 +1256,21 @@ class LookerV2Source(TestableSource, StatefulIngestionSourceBase):
 
         entities: List[Entity] = []
 
-        # Fetch and emit ancestor chain
-        try:
-            ancestors = self.looker_api.folder_ancestors(folder_id=folder.id)
-            for ancestor in ancestors:
-                if ancestor.id and ancestor.id not in self.processed_folders:
-                    self.processed_folders.append(ancestor.id)
-                    parent_key = None
-                    if ancestor.parent_id:
-                        parent_key = self._gen_folder_key(ancestor.parent_id)
-                    container = Container(
-                        container_key=self._gen_folder_key(ancestor.id),
-                        subtype=BIContainerSubTypes.LOOKER_FOLDER,
-                        display_name=ancestor.name or f"Folder {ancestor.id}",
-                        parent_container=parent_key,
-                    )
-                    entities.append(container)
-        except SDKError as e:
-            logger.debug(f"Failed to fetch folder ancestors for {folder.id}: {e}")
+        # Emit ancestor chain
+        ancestors = self._get_folder_ancestors(folder.id)
+        for ancestor in ancestors:
+            if ancestor.id and ancestor.id not in self.processed_folders:
+                self.processed_folders.append(ancestor.id)
+                parent_key = None
+                if ancestor.parent_id:
+                    parent_key = self._gen_folder_key(ancestor.parent_id)
+                container = Container(
+                    container_key=self._gen_folder_key(ancestor.id),
+                    subtype=BIContainerSubTypes.LOOKER_FOLDER,
+                    display_name=ancestor.name or f"Folder {ancestor.id}",
+                    parent_container=parent_key,
+                )
+                entities.append(container)
 
         # Emit the folder itself
         if folder.id not in self.processed_folders:
@@ -1263,16 +1303,12 @@ class LookerV2Source(TestableSource, StatefulIngestionSourceBase):
         ):
             return True
 
-        # Fall back to checking folder ancestors which have full Folder objects
-        try:
-            ancestors = self.looker_api.folder_ancestors(folder_id=folder.id)
-            for ancestor in ancestors:
-                if getattr(ancestor, "is_personal", None) or getattr(
-                    ancestor, "is_personal_descendant", None
-                ):
-                    return True
-        except SDKError:
-            pass
+        # Check ancestor chain for personal folder flags
+        for ancestor in self._get_folder_ancestors(folder.id):
+            if getattr(ancestor, "is_personal", None) or getattr(
+                ancestor, "is_personal_descendant", None
+            ):
+                return True
 
         return False
 
@@ -1280,14 +1316,11 @@ class LookerV2Source(TestableSource, StatefulIngestionSourceBase):
         """Get full folder path using ancestor chain."""
         if not folder.id:
             return folder.name or ""
-        try:
-            ancestors = self.looker_api.folder_ancestors(folder_id=folder.id)
-            path_parts = [a.name for a in ancestors if a.name]
-            if folder.name:
-                path_parts.append(folder.name)
-            return "/".join(path_parts)
-        except SDKError:
-            return folder.name or ""
+        ancestors = self._get_folder_ancestors(folder.id)
+        path_parts = [a.name for a in ancestors if a.name]
+        if folder.name:
+            path_parts.append(folder.name)
+        return "/".join(path_parts) if path_parts else (folder.name or "")
 
     def _process_looks(self) -> Iterable[MetadataWorkUnit]:
         """Process standalone looks."""

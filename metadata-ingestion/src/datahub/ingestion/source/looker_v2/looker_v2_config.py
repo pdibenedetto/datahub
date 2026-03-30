@@ -161,11 +161,12 @@ class LookerV2Config(
         "Connections not listed here will be auto-discovered from the Looker API.",
     )
     use_pdt_graph_api: bool = Field(
-        default=False,
+        default=True,
         description="Use Looker's PDT dependency graph API for derived table lineage. "
         "More reliable than SQL regex parsing for PDT-to-PDT dependencies. "
         "Falls back to SQL parsing when API data is unavailable. "
-        "Requires the 'develop' permission on the Looker API client.",
+        "Requires the 'develop' permission on the Looker API client. "
+        "Set to False if your API credentials lack the 'develop' permission.",
     )
     emit_unreachable_views: bool = Field(
         default=False,
