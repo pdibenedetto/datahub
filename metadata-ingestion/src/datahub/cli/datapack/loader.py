@@ -212,6 +212,11 @@ def _resolve_index_file(
                 logger.warning("Failed to fetch %s, skipping", file_url, exc_info=True)
 
     click.echo(f"Resolved {len(entries)} data files from index.")
+    if not entries:
+        raise click.ClickException(
+            f"Failed to download any data files for pack '{pack.name}'. "
+            "Check the URLs and your network connection."
+        )
     return entries
 
 
