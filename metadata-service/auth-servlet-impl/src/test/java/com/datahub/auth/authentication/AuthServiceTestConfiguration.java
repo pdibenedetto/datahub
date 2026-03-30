@@ -19,34 +19,80 @@ import io.datahubproject.test.metadata.context.TestOperationContexts;
 import io.opentelemetry.api.OpenTelemetry;
 import io.opentelemetry.api.trace.SpanContext;
 import io.opentelemetry.api.trace.Tracer;
+import org.mockito.Mockito;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.context.annotation.Primary;
 
+// All dependencies are provided as @Bean methods rather than @MockitoBean fields because
+// this is a minimal @SpringBootTest(classes = {DispatcherServlet.class}) context with no
+// factory beans — @MockitoBean requires an existing bean definition to override, but these
+// services have none in this context (or are registered under different names/subtypes).
 @TestConfiguration
 public class AuthServiceTestConfiguration {
 
   public static String SYSTEM_CLIENT_ID = "systemClientId";
-  @MockitoBean StatelessTokenService statelessTokenService;
 
-  @MockitoBean(name = "configurationProvider")
-  ConfigurationProvider configProvider;
+  // StatelessTokenService has no bean definition (production uses StatefulTokenService)
+  @Bean
+  @Primary
+  public StatelessTokenService statelessTokenService() {
+    return Mockito.mock(StatelessTokenService.class);
+  }
 
-  @MockitoBean NativeUserService nativeUserService;
+  @Bean(name = "configurationProvider")
+  public ConfigurationProvider configProvider() {
+    return Mockito.mock(ConfigurationProvider.class);
+  }
 
-  @MockitoBean UserSessionEligibilityChecker userSessionEligibilityChecker;
+  @Bean
+  @Primary
+  public NativeUserService nativeUserService() {
+    return Mockito.mock(NativeUserService.class);
+  }
 
-  @MockitoBean EntityService entityService;
+  @Bean
+  @Primary
+  public UserSessionEligibilityChecker userSessionEligibilityChecker() {
+    return Mockito.mock(UserSessionEligibilityChecker.class);
+  }
 
-  @MockitoBean SecretService secretService;
+  @Bean
+  @Primary
+  @SuppressWarnings("unchecked")
+  public EntityService<?> entityService() {
+    return Mockito.mock(EntityService.class);
+  }
 
-  @MockitoBean InviteTokenService inviteTokenService;
+  @Bean
+  @Primary
+  public SecretService secretService() {
+    return Mockito.mock(SecretService.class);
+  }
 
-  @MockitoBean TrackingService trackingService;
+  @Bean
+  @Primary
+  public InviteTokenService inviteTokenService() {
+    return Mockito.mock(InviteTokenService.class);
+  }
 
-  @MockitoBean Tracer mockTracer;
+  @Bean
+  @Primary
+  public TrackingService trackingService() {
+    return Mockito.mock(TrackingService.class);
+  }
 
-  @MockitoBean SpanContext mockSpanContext;
+  @Bean
+  @Primary
+  public Tracer mockTracer() {
+    return Mockito.mock(Tracer.class);
+  }
+
+  @Bean
+  @Primary
+  public SpanContext mockSpanContext() {
+    return Mockito.mock(SpanContext.class);
+  }
 
   @Bean
   public Tracer noopTestTracer() {
