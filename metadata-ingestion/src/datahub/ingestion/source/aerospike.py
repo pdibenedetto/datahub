@@ -23,16 +23,7 @@ from datahub.configuration.source_common import (
     EnvConfigMixin,
     PlatformInstanceConfigMixin,
 )
-from datahub.emitter.mce_builder import (
-    make_data_platform_urn,
-    make_dataplatform_instance_urn,
-)
-from datahub.emitter.mcp import MetadataChangeProposalWrapper
-from datahub.emitter.mcp_builder import (
-    NamespaceKey,
-    add_dataset_to_container,
-    gen_containers,
-)
+from datahub.emitter.mcp_builder import NamespaceKey
 from datahub.ingestion.api.common import PipelineContext
 from datahub.ingestion.api.decorators import (
     SourceCapability,
@@ -72,11 +63,9 @@ from datahub.metadata.com.linkedin.pegasus2avro.schema import (
     StringTypeClass,
     UnionTypeClass,
 )
-from datahub.metadata.schema_classes import (
-    DataPlatformInstanceClass,
-    DatasetPropertiesClass,
-)
-from datahub.metadata.urns import DatasetUrn
+from datahub.sdk.container import Container
+from datahub.sdk.dataset import Dataset
+from datahub.sdk.entity import Entity
 from datahub.utilities.lossy_collections import LossyList
 
 logger = logging.getLogger(__name__)
@@ -433,7 +422,9 @@ class AerospikeSource(StatefulIngestionSourceBase):
 
         return SchemaFieldDataType(type=TypeClass())
 
-    def get_workunits_internal(self) -> Iterable[MetadataWorkUnit]:
+    def get_workunits_internal(
+        self,
+    ) -> Iterable[Union[MetadataWorkUnit, Entity]]:
         all_sets = self.get_sets()
         namespaces = sorted(set(aerospike_set.ns for aerospike_set in all_sets))
         for namespace in namespaces:
@@ -441,7 +432,7 @@ class AerospikeSource(StatefulIngestionSourceBase):
 
     def _get_namespace_workunits(
         self, namespace: str, all_sets: List[AerospikeSet]
-    ) -> Iterable[MetadataWorkUnit]:
+    ) -> Iterable[Union[MetadataWorkUnit, Entity]]:
         if not self.config.namespace_pattern.allowed(namespace):
             self.report.report_dropped(namespace)
             return
@@ -452,10 +443,10 @@ class AerospikeSource(StatefulIngestionSourceBase):
             instance=self.config.platform_instance,
             env=self.config.env,
         )
-        yield from gen_containers(
-            container_key=namespace_key,
-            name=namespace,
-            sub_types=[DatasetContainerSubTypes.NAMESPACE],
+        yield Container(
+            namespace_key,
+            display_name=namespace,
+            subtype=DatasetContainerSubTypes.NAMESPACE,
         )
 
         ns_sets: List[AerospikeSet] = [
@@ -475,7 +466,7 @@ class AerospikeSource(StatefulIngestionSourceBase):
                 self.report.report_dropped(dataset_name)
                 continue
             try:
-                yield from self._get_set_workunits(curr_set, namespace_key, xdr_sets)
+                yield self._generate_dataset(curr_set, namespace_key, xdr_sets)
             except Exception as e:
                 self.report.warning(
                     message="Failed to extract set",
@@ -483,31 +474,9 @@ class AerospikeSource(StatefulIngestionSourceBase):
                     exc=e,
                 )
 
-    def _get_set_workunits(
-        self,
-        curr_set: AerospikeSet,
-        namespace_key: NamespaceKey,
-        xdr_sets: Dict[str, List[str]],
-    ) -> Iterable[MetadataWorkUnit]:
-        namespace = curr_set.ns
-        dataset_name = f"{namespace}.{curr_set.set}"
-
-        dataset_urn = DatasetUrn.create_from_ids(
-            platform_id=self.platform,
-            table_name=dataset_name,
-            env=self.config.env,
-            platform_instance=self.config.platform_instance,
-        )
-
-        data_platform_instance = None
-        if self.config.platform_instance:
-            data_platform_instance = DataPlatformInstanceClass(
-                platform=make_data_platform_urn(self.platform),
-                instance=make_dataplatform_instance_urn(
-                    self.platform, self.config.platform_instance
-                ),
-            )
-
+    def _build_custom_properties(
+        self, curr_set: AerospikeSet, xdr_sets: Dict[str, List[str]]
+    ) -> Dict[str, str]:
         custom_properties: Dict[str, str] = {
             "record_count": str(curr_set.objects),
         }
@@ -520,33 +489,35 @@ class AerospikeSource(StatefulIngestionSourceBase):
         set_xdr = xdr_sets.get(curr_set.set)
         if set_xdr:
             custom_properties["xdr_dcs"] = ",".join(set_xdr)
+        return custom_properties
 
-        dataset_properties = DatasetPropertiesClass(
-            name=curr_set.set,
-            tags=[],
-            customProperties=custom_properties,
-        )
+    def _generate_dataset(
+        self,
+        curr_set: AerospikeSet,
+        namespace_key: NamespaceKey,
+        xdr_sets: Dict[str, List[str]],
+    ) -> Dataset:
+        dataset_name = f"{curr_set.ns}.{curr_set.set}"
+        custom_properties = self._build_custom_properties(curr_set, xdr_sets)
 
         schema_metadata: Optional[SchemaMetadata] = None
         if self.config.infer_schema_depth != 0:
             schema_metadata = self._infer_schema_metadata(
                 as_set=curr_set,
-                dataset_urn=dataset_urn,
-                dataset_properties=dataset_properties,
+                dataset_name=dataset_name,
+                custom_properties=custom_properties,
             )
 
-        yield from add_dataset_to_container(namespace_key, dataset_urn.urn())
-        yield from [
-            mcp.as_workunit()
-            for mcp in MetadataChangeProposalWrapper.construct_many(
-                entityUrn=dataset_urn.urn(),
-                aspects=[
-                    schema_metadata,
-                    dataset_properties,
-                    data_platform_instance,
-                ],
-            )
-        ]
+        return Dataset(
+            platform=self.platform,
+            name=dataset_name,
+            env=self.config.env,
+            platform_instance=self.config.platform_instance,
+            display_name=curr_set.set,
+            parent_container=namespace_key,
+            custom_properties=custom_properties,
+            schema=schema_metadata,
+        )
 
     def get_sets(self) -> List[AerospikeSet]:
         try:
@@ -573,9 +544,9 @@ class AerospikeSource(StatefulIngestionSourceBase):
 
     def _infer_schema_metadata(
         self,
-        dataset_urn: DatasetUrn,
         as_set: AerospikeSet,
-        dataset_properties: DatasetPropertiesClass,
+        dataset_name: str,
+        custom_properties: Dict[str, str],
     ) -> SchemaMetadata:
         set_full_schema: Dict[Tuple[str, ...], SchemaDescription] = (
             construct_schema_aerospike(
@@ -588,33 +559,29 @@ class AerospikeSource(StatefulIngestionSourceBase):
             )
         )
 
-        set_schema, dataset_properties = self.limit_schema_size(
-            set_full_schema, dataset_properties
-        )
+        set_schema = self._limit_schema_size(set_full_schema, custom_properties)
 
         set_fields: Union[List[SchemaDescription], ValuesView[SchemaDescription]] = (
             set_schema.values()
         )
         logger.debug(f"Size of set {as_set.set} fields = {len(set_fields)}")
-        # append each schema field (sort so output is consistent)
         canonical_schema: List[SchemaField] = []
         for schema_field in set_fields:
             field = SchemaField(
                 fieldPath=schema_field["delimited_name"],
                 nativeDataType=self.get_aerospike_type_string(
-                    schema_field["type"], dataset_urn.name
+                    schema_field["type"], dataset_name
                 ),
-                type=self.get_field_type(schema_field["type"], dataset_urn.name),
+                type=self.get_field_type(schema_field["type"], dataset_name),
                 description=None,
                 nullable=schema_field["nullable"],
                 recursive=False,
             )
             canonical_schema.append(field)
 
-        # create schema metadata object for set
         return SchemaMetadata(
             schemaName=as_set.set,
-            platform=dataset_urn.platform,
+            platform=f"urn:li:dataPlatform:{self.platform}",
             version=0,
             hash="",
             platformSchema=SchemalessClass(),
@@ -622,17 +589,17 @@ class AerospikeSource(StatefulIngestionSourceBase):
             primaryKeys=["PK"],
         )
 
-    def limit_schema_size(
+    def _limit_schema_size(
         self,
         schema: Dict[Tuple[str, ...], SchemaDescription],
-        dataset_properties: DatasetPropertiesClass,
-    ) -> Tuple[Dict[Tuple[str, ...], SchemaDescription], DatasetPropertiesClass]:
+        custom_properties: Dict[str, str],
+    ) -> Dict[Tuple[str, ...], SchemaDescription]:
         """
-        Limits the size of the schema to the maxSchemaSize and inferSchemaDepth
+        Limits the size of the schema to the max_schema_size and infer_schema_depth.
+        Mutates custom_properties in-place to record truncation metadata.
         """
 
         if self.config.infer_schema_depth != -1:
-            # Infer schema only at the specified depth
             truncated_schema = {
                 k: v
                 for k, v in schema.items()
@@ -648,10 +615,8 @@ class AerospikeSource(StatefulIngestionSourceBase):
                     message="Truncating the collection schema because it has too many nested levels.",
                     context=f"Schema Depth: {len(schema)}, Configured threshold: {self.config.infer_schema_depth}",
                 )
-                dataset_properties.customProperties["schema.truncated"] = "True"
-                dataset_properties.customProperties["schema.totalDepth"] = (
-                    f"{schema_depth}"
-                )
+                custom_properties["schema.truncated"] = "True"
+                custom_properties["schema.totalDepth"] = f"{schema_depth}"
                 schema = truncated_schema
 
         schema_size = len(schema)
@@ -662,9 +627,8 @@ class AerospikeSource(StatefulIngestionSourceBase):
                 message="Downsampling the collection schema because it has too many schema fields.",
                 context=f"Schema Size: {schema_size}, Configured threshold: {max_schema_size}",
             )
-            dataset_properties.customProperties["schema.downsampled"] = "True"
-            dataset_properties.customProperties["schema.totalFields"] = f"{schema_size}"
-            # downsample the schema, using frequency as the sort key
+            custom_properties["schema.downsampled"] = "True"
+            custom_properties["schema.totalFields"] = f"{schema_size}"
             schema = dict(
                 sorted(
                     schema.items(),
@@ -674,7 +638,7 @@ class AerospikeSource(StatefulIngestionSourceBase):
                     ),
                 )[0:max_schema_size]
             )
-        return schema, dataset_properties
+        return schema
 
     def xdr_sets(self, namespace: str, sets: List[str]) -> Dict[str, List[str]]:
         sets_dc: Dict[str, List[str]] = {key: [] for key in sets}
