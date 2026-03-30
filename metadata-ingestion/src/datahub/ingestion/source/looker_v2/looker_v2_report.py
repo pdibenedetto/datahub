@@ -6,18 +6,15 @@ Fine-grained statistics and reporting for the Looker V2 source.
 
 from __future__ import annotations
 
-import datetime
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
-from datahub.ingestion.source.state.stale_entity_removal_handler import (
-    StaleEntityRemovalSourceReport,
-)
-from datahub.utilities.lossy_collections import LossyList, LossySet
+from datahub.ingestion.source.looker.looker_common import LookerDashboardSourceReport
+from datahub.utilities.lossy_collections import LossyList
 
 
 @dataclass
-class LookerV2SourceReport(StaleEntityRemovalSourceReport):
+class LookerV2SourceReport(LookerDashboardSourceReport):
     """
     Comprehensive report for Looker V2 source ingestion.
 
@@ -27,17 +24,17 @@ class LookerV2SourceReport(StaleEntityRemovalSourceReport):
 
     # =========== Entity Counts ===========
     dashboards_discovered: int = 0
-    dashboards_scanned: int = 0
+    # dashboards_scanned: inherited from LookerDashboardSourceReport
     dashboards_filtered: LossyList[str] = field(default_factory=LossyList)
 
     charts_discovered: int = 0
     charts_scanned: int = 0
 
     looks_discovered: int = 0
-    looks_scanned: int = 0
+    # looks_scanned: inherited from LookerDashboardSourceReport
 
     explores_discovered: int = 0
-    explores_scanned: int = 0
+    # explores_scanned: inherited from LookerDashboardSourceReport
 
     models_discovered: int = 0
 
@@ -86,14 +83,12 @@ class LookerV2SourceReport(StaleEntityRemovalSourceReport):
     # =========== Usage Stats ===========
     dashboards_with_usage: int = 0
     charts_with_usage: int = 0
-    dashboards_scanned_for_usage: int = 0
-    charts_scanned_for_usage: int = 0
-    dashboards_skipped_for_usage: LossySet[str] = field(default_factory=LossySet)
-    charts_skipped_for_usage: LossySet[str] = field(default_factory=LossySet)
-    dashboards_with_activity: LossySet[str] = field(default_factory=LossySet)
-    charts_with_activity: LossySet[str] = field(default_factory=LossySet)
-    query_latency: Dict[str, Any] = field(default_factory=dict)
-    user_resolution_latency: Dict[str, Any] = field(default_factory=dict)
+    # dashboards_scanned_for_usage: inherited
+    # charts_scanned_for_usage: inherited
+    # dashboards_skipped_for_usage: inherited
+    # charts_skipped_for_usage: inherited
+    # dashboards_with_activity: inherited
+    # charts_with_activity: inherited
 
     # =========== API Performance ===========
     api_calls_by_endpoint: Dict[str, int] = field(default_factory=dict)
@@ -109,21 +104,27 @@ class LookerV2SourceReport(StaleEntityRemovalSourceReport):
     # =========== Stage Timings ===========
     stage_timings_seconds: Dict[str, float] = field(default_factory=dict)
 
-    # =========== Upstream Latency Tracking ===========
-    _upstream_latency_min: Optional[float] = field(default=None, repr=False)
-    _upstream_latency_max: Optional[float] = field(default=None, repr=False)
-    _upstream_latency_sum: float = field(default=0.0, repr=False)
-    _upstream_latency_count: int = field(default=0, repr=False)
+    # =========== Upstream API Latency Tracking ===========
+    _upstream_api_latency_min: Optional[float] = field(default=None, repr=False)
+    _upstream_api_latency_max: Optional[float] = field(default=None, repr=False)
+    _upstream_api_latency_sum: float = field(default=0.0, repr=False)
+    _upstream_api_latency_count: int = field(default=0, repr=False)
 
-    def report_upstream_latency(self, start_time: float, end_time: float) -> None:
+    def record_api_call_latency(self, start_time: float, end_time: float) -> None:
         """Record latency for an upstream API call."""
         latency = end_time - start_time
-        if self._upstream_latency_min is None or latency < self._upstream_latency_min:
-            self._upstream_latency_min = latency
-        if self._upstream_latency_max is None or latency > self._upstream_latency_max:
-            self._upstream_latency_max = latency
-        self._upstream_latency_sum += latency
-        self._upstream_latency_count += 1
+        if (
+            self._upstream_api_latency_min is None
+            or latency < self._upstream_api_latency_min
+        ):
+            self._upstream_api_latency_min = latency
+        if (
+            self._upstream_api_latency_max is None
+            or latency > self._upstream_api_latency_max
+        ):
+            self._upstream_api_latency_max = latency
+        self._upstream_api_latency_sum += latency
+        self._upstream_api_latency_count += 1
 
     def report_orphaned_file(self, file_path: str) -> None:
         """Report an orphaned view file not included by any model."""
@@ -131,7 +132,7 @@ class LookerV2SourceReport(StaleEntityRemovalSourceReport):
         self.orphaned_view_files_count += 1
         self.report_warning(
             title="Orphaned LookML File",
-            message=f"View file not included by any model: {file_path}",
+            message="View file not included by any model",
             context=file_path,
         )
 
@@ -151,26 +152,6 @@ class LookerV2SourceReport(StaleEntityRemovalSourceReport):
         self.field_chunks_processed += chunks_processed
         self.field_chunks_succeeded += chunks_succeeded
         self.field_chunks_failed += chunks_failed
-
-    def report_dashboards_scanned_for_usage(self, num_dashboards: int) -> None:
-        """Duck-type compatible with LookerDashboardSourceReport for usage generators."""
-        self.dashboards_scanned_for_usage += num_dashboards
-
-    def report_charts_scanned_for_usage(self, num_charts: int) -> None:
-        """Duck-type compatible with LookerDashboardSourceReport for usage generators."""
-        self.charts_scanned_for_usage += num_charts
-
-    def report_query_latency(
-        self, query_type: str, latency: datetime.timedelta
-    ) -> None:
-        """Duck-type compatible with LookerDashboardSourceReport for usage generators."""
-        self.query_latency[query_type] = latency
-
-    def report_user_resolution_latency(
-        self, generator_type: str, latency: datetime.timedelta
-    ) -> None:
-        """Duck-type compatible with LookerDashboardSourceReport for usage generators."""
-        self.user_resolution_latency[generator_type] = latency
 
     def report_refinement(
         self,
@@ -192,15 +173,29 @@ class LookerV2SourceReport(StaleEntityRemovalSourceReport):
         """Compute derived statistics."""
         super().compute_stats()
 
-        # Compute upstream latency stats
-        if self._upstream_latency_count > 0:
-            avg_latency = self._upstream_latency_sum / self._upstream_latency_count
+        if self.stage_timings_seconds:
+            total = sum(self.stage_timings_seconds.values())
+            lines = [
+                f"  {name}: {secs:.3f}s ({100 * secs / total:.1f}%)"
+                for name, secs in sorted(
+                    self.stage_timings_seconds.items(), key=lambda x: -x[1]
+                )
+            ]
+            self.info(
+                title="Stage Timings",
+                message=f"Total pipeline time: {total:.2f}s\n" + "\n".join(lines),
+            )
+
+        if self._upstream_api_latency_count > 0:
+            avg_latency = (
+                self._upstream_api_latency_sum / self._upstream_api_latency_count
+            )
             self.info(
                 title="Upstream API Latency",
                 message=(
-                    f"min={self._upstream_latency_min:.3f}s, "
-                    f"max={self._upstream_latency_max:.3f}s, "
+                    f"min={self._upstream_api_latency_min:.3f}s, "
+                    f"max={self._upstream_api_latency_max:.3f}s, "
                     f"avg={avg_latency:.3f}s, "
-                    f"count={self._upstream_latency_count}"
+                    f"count={self._upstream_api_latency_count}"
                 ),
             )

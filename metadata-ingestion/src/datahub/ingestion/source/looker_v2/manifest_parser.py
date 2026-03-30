@@ -10,16 +10,22 @@ import logging
 import pathlib
 import tempfile
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Protocol, Set
 
 import lkml
 import lkml.simple
 from pydantic import SecretStr
 
-from datahub.configuration.git import GitInfo
 from datahub.ingestion.source.git.git_import import GitClone
 
 logger = logging.getLogger(__name__)
+
+
+class _DeployKeyProvider(Protocol):
+    """Structural protocol for any config that provides a deploy key."""
+
+    deploy_key: Optional[SecretStr]
+
 
 # Patch lkml to support manifest.lkml plural keys
 if not hasattr(lkml.simple, "_LOOKER_V2_PATCHED"):
@@ -76,7 +82,7 @@ class ManifestParser:
         base_folder: str,
         project_name: Optional[str] = None,
         project_dependencies: Optional[Dict[str, str]] = None,
-        git_info: Optional[GitInfo] = None,
+        git_info: Optional[_DeployKeyProvider] = None,
     ):
         """
         Initialize the manifest parser.

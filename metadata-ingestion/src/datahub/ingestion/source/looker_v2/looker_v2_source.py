@@ -244,11 +244,11 @@ class LookerV2Source(TestableSource, StatefulIngestionSourceBase):
         self.looker_api: LookerAPI = LookerAPI(self.config)
 
         # Registries for caching
-        # Type ignore: LookerV2SourceReport is duck-type compatible with LookerDashboardSourceReport
         self.user_registry: LookerUserRegistry = LookerUserRegistry(
             self.looker_api,
-            self.reporter,  # type: ignore[arg-type]
+            self.reporter,
         )
+        # LookerV2Config has the same bases as LookerDashboardSourceConfig; structurally compatible.
         self.explore_registry: LookerExploreRegistry = LookerExploreRegistry(
             self.looker_api,
             self.reporter,
@@ -433,39 +433,47 @@ class LookerV2Source(TestableSource, StatefulIngestionSourceBase):
         """Initialize source: clone repos, populate registries."""
         # Clone git repos if needed
         if self.config.git_info:
-            self._clone_main_project()
+            with self._stage_timer("init.clone_main"):
+                self._clone_main_project()
 
         # Clone dependency repos from config
         for project_name, dep in self.config.project_dependencies.items():
             if hasattr(dep, "repo"):  # GitInfo
-                self._clone_dependency(project_name, dep)
+                with self._stage_timer(f"init.clone_dep.{project_name}"):
+                    self._clone_dependency(project_name, dep)
             else:
                 self._resolved_project_paths[project_name] = dep
 
         # Parse manifest.lkml and resolve additional dependencies
         if self.config.base_folder:
-            self._resolve_manifest_dependencies()
+            with self._stage_timer("init.manifest"):
+                self._resolve_manifest_dependencies()
 
         # Populate registries
-        self._populate_registries()
+        with self._stage_timer("init.populate_registries"):
+            self._populate_registries()
 
         # Auto-discover connections from Looker API
-        self._auto_discover_connections()
+        with self._stage_timer("init.discover_connections"):
+            self._auto_discover_connections()
 
         # Fetch PDT lineage graphs
-        self._fetch_pdt_lineage()
+        with self._stage_timer("init.pdt_lineage"):
+            self._fetch_pdt_lineage()
 
-        # Discover views
+        # Discover views (includes parallel explore API calls)
         if self.config.extract_views and self.config.base_folder:
-            self._discover_views()
+            with self._stage_timer("init.discover_views"):
+                self._discover_views()
 
         # Initialize refinement handler once for all views
         if self.config.process_refinements and self.config.base_folder:
-            self._refinement_handler = RefinementHandler(
-                base_folder=self.config.base_folder,
-                project_name=self.config.project_name or "default",
-                project_dependencies=self._resolved_project_paths or None,
-            )
+            with self._stage_timer("init.refinement_handler"):
+                self._refinement_handler = RefinementHandler(
+                    base_folder=self.config.base_folder,
+                    project_name=self.config.project_name or "default",
+                    project_dependencies=self._resolved_project_paths or None,
+                )
 
         # Emit project container
         if self.config.project_name and self.config.base_folder:
@@ -480,7 +488,7 @@ class LookerV2Source(TestableSource, StatefulIngestionSourceBase):
             base_folder=self.config.base_folder,
             project_name=self.config.project_name,
             project_dependencies=self._resolved_project_paths,
-            git_info=self.config.git_info,  # type: ignore[arg-type]
+            git_info=self.config.git_info,
         )
 
         try:
@@ -513,8 +521,8 @@ class LookerV2Source(TestableSource, StatefulIngestionSourceBase):
         except (OSError, ValueError, KeyError) as e:
             self.reporter.report_warning(
                 title="Manifest Resolution Failed",
-                message=f"Failed to parse manifest.lkml: {e}",
-                context=str(self.config.base_folder),
+                message="Failed to parse manifest.lkml",
+                context=f"{self.config.base_folder}: {e}",
             )
 
     def _clone_main_project(self) -> None:
@@ -607,11 +615,8 @@ class LookerV2Source(TestableSource, StatefulIngestionSourceBase):
         if failed_connections:
             self.reporter.report_warning(
                 title="Connection Auto-Discovery Incomplete",
-                message=(
-                    f"Could not auto-discover {len(failed_connections)} connection(s): "
-                    f"{', '.join(failed_connections)}. "
-                    "Add them manually to connection_to_platform_map if needed."
-                ),
+                message="Could not auto-discover some connections; add them manually to connection_to_platform_map if needed.",
+                context=f"{len(failed_connections)} failed: {', '.join(failed_connections)}",
             )
 
     def _fetch_pdt_lineage(self) -> None:
@@ -638,7 +643,8 @@ class LookerV2Source(TestableSource, StatefulIngestionSourceBase):
                 )
                 self.reporter.report_warning(
                     title="PDT Graph Fetch Failed",
-                    message=f"Could not fetch PDT graph for model '{model_name}': {e}",
+                    message="Could not fetch PDT graph for model",
+                    context=f"{model_name}: {e}",
                 )
 
     def _discover_views(self) -> None:
@@ -646,8 +652,9 @@ class LookerV2Source(TestableSource, StatefulIngestionSourceBase):
         if not self.config.base_folder:
             return
 
-        # Get explore view names from API
-        explore_views = self._get_explore_view_names()
+        # Get explore view names from API (parallel)
+        with self._stage_timer("init.explore_view_names"):
+            explore_views = self._get_explore_view_names()
 
         # Run view discovery
         discovery = ViewDiscovery(
@@ -678,42 +685,49 @@ class LookerV2Source(TestableSource, StatefulIngestionSourceBase):
         )
 
     def _get_explore_view_names(self) -> FrozenSet[str]:
-        """Get all view names referenced by explores via API."""
+        """Get all view names referenced by explores via API (parallel fetch)."""
+        explore_pairs: List[Tuple[str, str]] = [
+            (model.name, explore_basic.name)
+            for model in self._model_registry.values()
+            if model.explores and model.name
+            for explore_basic in model.explores
+            if explore_basic.name
+        ]
+
+        def fetch_explore(
+            model_name: str, explore_name: str
+        ) -> Optional[Tuple[str, str, LookmlModelExplore]]:
+            try:
+                explore = self.looker_api.lookml_model_explore(model_name, explore_name)
+                return (model_name, explore_name, explore)
+            except SDKError as e:
+                logger.warning(
+                    f"Failed to fetch explore {model_name}.{explore_name}: {e}"
+                )
+                return None
+
         view_names: Set[str] = set()
-
-        for model in self._model_registry.values():
-            if model.explores:
-                for explore_basic in model.explores:
-                    if explore_basic.name and model.name:
-                        try:
-                            # Fetch full explore details
-                            explore = self.looker_api.lookml_model_explore(
-                                model.name, explore_basic.name
-                            )
-
-                            # Cache for reuse in _process_single_explore
-                            self._explore_cache[(model.name, explore_basic.name)] = (
-                                explore
-                            )
-
-                            # Extract view name
-                            if explore.view_name:
-                                view_names.add(explore.view_name)
-                            elif explore.name:
-                                view_names.add(explore.name)
-
-                            # Extract joined view names
-                            if explore.joins:
-                                for join in explore.joins:
-                                    if join.from_:
-                                        view_names.add(join.from_)
-                                    elif join.name:
-                                        view_names.add(join.name)
-
-                        except SDKError as e:
-                            logger.warning(
-                                f"Failed to fetch explore {model.name}.{explore_basic.name}: {e}"
-                            )
+        for future in BackpressureAwareExecutor.map(
+            fn=fetch_explore,
+            args_list=[(m, e) for m, e in explore_pairs],
+            max_workers=self.config.max_concurrent_requests,
+            max_pending=self.config.max_concurrent_requests * 2,
+        ):
+            result = future.result()
+            if result is None:
+                continue
+            model_name, explore_name, explore = result
+            self._explore_cache[(model_name, explore_name)] = explore
+            if explore.view_name:
+                view_names.add(explore.view_name)
+            elif explore.name:
+                view_names.add(explore.name)
+            if explore.joins:
+                for join in explore.joins:
+                    if join.from_:
+                        view_names.add(join.from_)
+                    elif join.name:
+                        view_names.add(join.name)
 
         return frozenset(view_names)
 
@@ -794,7 +808,8 @@ class LookerV2Source(TestableSource, StatefulIngestionSourceBase):
             except (SDKError, ValueError, KeyError, TypeError) as e:
                 self.reporter.report_warning(
                     title="Dashboard Processing Failed",
-                    message=str(e),
+                    message="Error processing dashboard",
+                    context=str(e),
                 )
 
     def _process_single_dashboard(
@@ -1002,11 +1017,7 @@ class LookerV2Source(TestableSource, StatefulIngestionSourceBase):
         )
 
         # Add ownership
-        if (
-            api_dashboard.user_id
-            and hasattr(self.config, "extract_owners")
-            and self.config.extract_owners
-        ):  # type: ignore
+        if api_dashboard.user_id and self.config.extract_owners:
             user = self.user_registry.get_by_id(str(api_dashboard.user_id))
             if user and user.email:
                 dashboard.add_owner((CorpUserUrn(user.email), "DATAOWNER"))
@@ -1330,11 +1341,7 @@ class LookerV2Source(TestableSource, StatefulIngestionSourceBase):
         )
 
         # Add ownership
-        if (
-            look.user_id
-            and hasattr(self.config, "extract_owners")
-            and self.config.extract_owners
-        ):  # type: ignore
+        if look.user_id and self.config.extract_owners:
             user = self.user_registry.get_by_id(str(look.user_id))
             if user and user.email:
                 chart.add_owner((CorpUserUrn(user.email), "DATAOWNER"))
@@ -1397,7 +1404,8 @@ class LookerV2Source(TestableSource, StatefulIngestionSourceBase):
             except (SDKError, ValueError, KeyError, TypeError) as e:
                 self.reporter.report_warning(
                     title="Explore Processing Failed",
-                    message=str(e),
+                    message="Error processing explore",
+                    context=str(e),
                 )
 
     def _process_single_explore(
@@ -1771,7 +1779,7 @@ class LookerV2Source(TestableSource, StatefulIngestionSourceBase):
         try:
             dashboard_stat_generator = looker_usage.create_dashboard_stat_generator(
                 config=stat_generator_config,
-                report=self.reporter,  # type: ignore[arg-type]
+                report=self.reporter,
                 urn_builder=self._make_dashboard_urn,
                 looker_dashboards=self._dashboards_for_usage,
             )
@@ -1781,7 +1789,8 @@ class LookerV2Source(TestableSource, StatefulIngestionSourceBase):
         except (SDKError, ValueError, KeyError) as e:
             self.reporter.report_warning(
                 title="Dashboard Usage Stats Failed",
-                message=str(e),
+                message="Error generating dashboard usage stats",
+                context=str(e),
             )
 
         # Chart/Look usage stats
@@ -1802,7 +1811,7 @@ class LookerV2Source(TestableSource, StatefulIngestionSourceBase):
             try:
                 chart_stat_generator = looker_usage.create_chart_stat_generator(
                     config=stat_generator_config,
-                    report=self.reporter,  # type: ignore[arg-type]
+                    report=self.reporter,
                     urn_builder=self._make_chart_urn,
                     looker_looks=unique_looks,
                 )
@@ -1812,7 +1821,8 @@ class LookerV2Source(TestableSource, StatefulIngestionSourceBase):
             except (SDKError, ValueError, KeyError) as e:
                 self.reporter.report_warning(
                     title="Chart Usage Stats Failed",
-                    message=str(e),
+                    message="Error generating chart usage stats",
+                    context=str(e),
                 )
 
     def _make_dashboard_urn(self, dashboard_id: str) -> str:
@@ -1949,7 +1959,7 @@ class LookerV2Source(TestableSource, StatefulIngestionSourceBase):
                     fqn = _generate_fully_qualified_name(
                         sql_table_name=table_name,
                         connection_def=conn_def,
-                        reporter=self.reporter,  # type: ignore[arg-type]
+                        reporter=self.reporter,
                         view_name=parsed_view.name,
                     )
                     upstream_urn = builder.make_dataset_urn_with_platform_instance(
@@ -1975,7 +1985,7 @@ class LookerV2Source(TestableSource, StatefulIngestionSourceBase):
                             fqn = _generate_fully_qualified_name(
                                 sql_table_name=edge.upstream_name,
                                 connection_def=conn_def,
-                                reporter=self.reporter,  # type: ignore[arg-type]
+                                reporter=self.reporter,
                                 view_name=parsed_view.name,
                             )
                             upstream_urn = (
@@ -2011,7 +2021,7 @@ class LookerV2Source(TestableSource, StatefulIngestionSourceBase):
                         fqn = _generate_fully_qualified_name(
                             sql_table_name=table_ref,
                             connection_def=conn_def,
-                            reporter=self.reporter,  # type: ignore[arg-type]
+                            reporter=self.reporter,
                             view_name=parsed_view.name,
                         )
                         upstream_urn = builder.make_dataset_urn_with_platform_instance(
@@ -2081,7 +2091,7 @@ class LookerV2Source(TestableSource, StatefulIngestionSourceBase):
                             fqn = _generate_fully_qualified_name(
                                 sql_table_name=table_name,
                                 connection_def=conn_def,
-                                reporter=self.reporter,  # type: ignore[arg-type]
+                                reporter=self.reporter,
                                 view_name=ref_view_name,
                             )
                             upstream_urns.append(
@@ -2296,8 +2306,8 @@ class LookerV2Source(TestableSource, StatefulIngestionSourceBase):
             logger.warning(f"Refinement processing failed for {view_name}: {e}")
             self.reporter.report_warning(
                 title="Refinement Processing Failed",
-                message=f"Failed to process refinements for view {view_name}: {e}",
-                context=view_name,
+                message="Failed to process refinements for view",
+                context=f"{view_name}: {e}",
             )
             return [], None
 
