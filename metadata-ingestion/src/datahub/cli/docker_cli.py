@@ -837,7 +837,7 @@ def quickstart(
     click.echo()
     click.secho("✔ DataHub is now running", fg="green")
     click.secho(
-        "Ingest some demo data using `datahub docker ingest-sample-data`,\n"
+        "Load sample data using `datahub datapack load showcase-ecommerce`,\n"
         "or head to http://localhost:9002 (username: datahub, password: datahub) to play around with the frontend.",
         fg="green",
     )

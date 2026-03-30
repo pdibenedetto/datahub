@@ -120,7 +120,7 @@ SQL and search index setup are performed by the system update job (datahub-upgra
 
 ### Ingesting demo data.
 
-If you want to test ingesting some data once DataHub is up, use the `./docker/ingestion/ingestion.sh` script or `datahub docker ingest-sample-data`. See the [quickstart guide](../docs/quickstart.md) for more details.
+If you want to test ingesting some data once DataHub is up, use `datahub datapack load showcase-ecommerce` or the `./docker/ingestion/ingestion.sh` script. See the [quickstart guide](../docs/quickstart.md) for more details.
 
 ## Using Docker Images During Development
 
