@@ -84,17 +84,12 @@ public class AuthServiceTestConfiguration {
 
   @Bean
   @Primary
-  public Tracer mockTracer() {
-    return Mockito.mock(Tracer.class);
-  }
-
-  @Bean
-  @Primary
   public SpanContext mockSpanContext() {
     return Mockito.mock(SpanContext.class);
   }
 
   @Bean
+  @Primary
   public Tracer noopTestTracer() {
     return OpenTelemetry.noop().getTracer("auth-servlet-impl-test");
   }
