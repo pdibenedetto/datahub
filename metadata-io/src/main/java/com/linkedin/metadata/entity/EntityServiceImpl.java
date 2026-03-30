@@ -179,6 +179,7 @@ public class EntityServiceImpl implements EntityService<ChangeItemImpl> {
   private final Integer ebeanMaxTransactionRetry;
   private final boolean enableBrowseV2;
   private final com.linkedin.metadata.utils.metrics.MetricUtils metricUtils;
+  private final boolean schemaVersionWritesEnabled;
 
   @Getter
   private final Map<Set<ThrottleType>, ThrottleEvent> throttleEvents = new ConcurrentHashMap<>();
@@ -246,6 +247,28 @@ public class EntityServiceImpl implements EntityService<ChangeItemImpl> {
       final boolean enableBrowseV2,
       @javax.annotation.Nullable
           final com.linkedin.metadata.utils.metrics.MetricUtils metricUtils) {
+    this(
+        aspectDao,
+        producer,
+        alwaysEmitChangeLog,
+        cdcModeChangeLog,
+        preProcessHooks,
+        retry,
+        enableBrowseV2,
+        metricUtils,
+        false);
+  }
+
+  public EntityServiceImpl(
+      @Nonnull final AspectDao aspectDao,
+      @Nonnull final EventProducer producer,
+      final boolean alwaysEmitChangeLog,
+      final boolean cdcModeChangeLog,
+      final PreProcessHooks preProcessHooks,
+      @Nullable final Integer retry,
+      final boolean enableBrowseV2,
+      @javax.annotation.Nullable final com.linkedin.metadata.utils.metrics.MetricUtils metricUtils,
+      final boolean schemaVersionWritesEnabled) {
 
     this.aspectDao = aspectDao;
     this.producer = producer;
@@ -255,7 +278,22 @@ public class EntityServiceImpl implements EntityService<ChangeItemImpl> {
     ebeanMaxTransactionRetry = retry != null ? retry : DEFAULT_MAX_TRANSACTION_RETRY;
     this.enableBrowseV2 = enableBrowseV2;
     this.metricUtils = metricUtils;
+    this.schemaVersionWritesEnabled = schemaVersionWritesEnabled;
     log.info("EntityService cdcModeChangeLog is {}", this.cdcModeChangeLog);
+  }
+
+  /**
+   * Updates the current schema version from the aspect definition onto each item's SystemMetadata,
+   * if schemaVersionWritesEnabled is set. Operates on any collection of BatchItems so it can be
+   * called for both non-timeseries (ChangeMCP list) and timeseries (MCPItem list) paths.
+   */
+  private <T extends BatchItem> void updateSchemaVersions(Collection<T> items) {
+    if (schemaVersionWritesEnabled) {
+      items.forEach(
+          item ->
+              SystemMetadataUtils.setSchemaVersion(
+                  item.getSystemMetadata(), item.getAspectSpec().getSchemaVersion()));
+    }
   }
 
   /**
@@ -311,6 +349,8 @@ public class EntityServiceImpl implements EntityService<ChangeItemImpl> {
         latestSystemMetadata.setLastObserved(
             changeSystemMetadata.getLastObserved(), SetMode.IGNORE_NULL);
         latestSystemMetadata.setRunId(changeSystemMetadata.getRunId(), SetMode.REMOVE_IF_NULL);
+        latestSystemMetadata.setSchemaVersion(
+            changeSystemMetadata.getSchemaVersion(), SetMode.IGNORE_NULL);
 
         if (!DataTemplateUtil.areEqual(
             latestAspect.getRecordTemplate(), changeMCP.getRecordTemplate())) {
@@ -1170,6 +1210,13 @@ public class EntityServiceImpl implements EntityService<ChangeItemImpl> {
                             updatedLatestAspects = batchAspects;
                           }
 
+                          // Updates the server's current schema version onto SystemMetadata so that
+                          // each persisted row records the version it was written at. This runs
+                          // after all items (originals + side-effects) are assembled so every write
+                          // is covered by a single gate. The read-path AspectMigrationMutatorChain
+                          // uses this to detect and upgrade stale rows during future reads.
+                          updateSchemaVersions(changeMCPs);
+
                           // No changes, return
                           if (changeMCPs.isEmpty()) {
                             opContext
@@ -1754,11 +1801,18 @@ public class EntityServiceImpl implements EntityService<ChangeItemImpl> {
                     .build(opContext));
           }
 
-          // Emit timeseries MCLs
-          List<Pair<MCPItem, MetadataChangeLog>> timeseriesMCLs =
+          // Updates schemaVersion on timeseries SystemMetadata before emitting to ES/MCL.
+          // Non-timeseries is handled in ingestAspectsToLocalDB after all items are assembled.
+          List<? extends BatchItem> timeseriesItems =
               aspectsBatch.getItems().stream()
                   .filter(
                       item -> item.getAspectSpec() != null && item.getAspectSpec().isTimeseries())
+                  .collect(Collectors.toList());
+          updateSchemaVersions(timeseriesItems);
+
+          // Emit timeseries MCLs
+          List<Pair<MCPItem, MetadataChangeLog>> timeseriesMCLs =
+              timeseriesItems.stream()
                   .map(item -> (MCPItem) item)
                   .map(
                       item ->

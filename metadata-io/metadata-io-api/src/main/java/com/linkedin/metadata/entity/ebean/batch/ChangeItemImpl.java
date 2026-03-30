@@ -176,6 +176,13 @@ public class ChangeItemImpl implements ChangeMCP {
         // generate default
         systemMetadata(null);
       }
+      // NOTE: schemaVersion is updated onto SystemMetadata later in
+      // EntityServiceImpl.ingestAspectsToLocalDB, after all items (originals + side-effects) are
+      // assembled, gated on the zduStage20 feature flag.
+      //
+      // Future work: allow clients to declare the version they are writing (via
+      // SystemMetadata.schemaVersion) and run the write-path migration chain to bring the payload
+      // up to the current version before persisting when needed.
       this.systemMetadata = SystemMetadataUtils.setAspectModified(this.systemMetadata, auditStamp);
 
       return new ChangeItemImpl(

@@ -16,6 +16,23 @@ public class ChangeItemImplTest {
   private static final AuditStamp TEST_AUDIT_STAMP = AspectGenerationUtils.createAuditStamp();
 
   @Test
+  public void testBuildDoesNotSetSchemaVersion() throws Exception {
+    // schemaVersion stamping was moved to EntityServiceImpl.updateSchemaVersions(),
+    // so build() must not set it — callers that bypass EntityServiceImpl would otherwise
+    // get unexpected schemaVersion values.
+    Urn entityUrn = UrnUtils.getUrn("urn:li:corpuser:schemaVersionTest");
+    ChangeItemImpl item =
+        ChangeItemImpl.builder()
+            .urn(entityUrn)
+            .aspectName(STATUS_ASPECT_NAME)
+            .recordTemplate(new Status().setRemoved(false))
+            .auditStamp(TEST_AUDIT_STAMP)
+            .build(TestOperationContexts.emptyActiveUsersAspectRetriever(null));
+
+    assertFalse(item.getSystemMetadata().hasSchemaVersion());
+  }
+
+  @Test
   public void testBatchDuplicate() throws Exception {
     Urn entityUrn = UrnUtils.getUrn("urn:li:corpuser:batchDuplicateTest");
     SystemMetadata systemMetadata = AspectGenerationUtils.createSystemMetadata();

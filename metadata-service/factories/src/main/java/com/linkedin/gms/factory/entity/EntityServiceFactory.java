@@ -48,7 +48,8 @@ public class EntityServiceFactory {
             featureFlags.getPreProcessHooks(),
             _ebeanMaxTransactionRetry,
             enableBrowsePathV2,
-            metricUtils);
+            metricUtils,
+            featureFlags.isZduStage20());
 
     if (throttleSensors != null
         && !throttleSensors.isEmpty()

@@ -1,5 +1,7 @@
 package com.linkedin.metadata.aspect.hooks;
 
+import static com.linkedin.metadata.Constants.DEFAULT_SCHEMA_VERSION;
+
 import com.linkedin.data.template.RecordTemplate;
 import com.linkedin.metadata.aspect.ReadItem;
 import com.linkedin.metadata.aspect.RetrieverContext;
@@ -31,20 +33,13 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 public abstract class AspectMigrationMutator {
 
-  /**
-   * Baseline schema version. Absent / null {@code schemaVersion} in {@link SystemMetadata} is
-   * treated as this version, representing the canonical pre-migration state of all existing
-   * aspects.
-   */
-  public static final long DEFAULT_SCHEMA_VERSION = 1L;
-
   /** The aspect name this mutator handles (e.g. {@code "ownership"}). */
   @Nonnull
   public abstract String getAspectName();
 
   /**
    * The schema version of source data this mutator accepts. Absent / null in {@link SystemMetadata}
-   * is treated as {@link #DEFAULT_SCHEMA_VERSION} ({@code 1}).
+   * is treated as {@link com.linkedin.metadata.Constants#DEFAULT_SCHEMA_VERSION} ({@code 1}).
    */
   public abstract long getSourceVersion();
 
@@ -146,7 +141,7 @@ public abstract class AspectMigrationMutator {
   /**
    * Returns {@code true} when the stored schema version matches {@link #getSourceVersion()}. A
    * {@code null} system metadata or absent {@code schemaVersion} field is treated as {@link
-   * #DEFAULT_SCHEMA_VERSION}.
+   * com.linkedin.metadata.Constants#DEFAULT_SCHEMA_VERSION}.
    */
   private boolean isSourceVersion(@Nullable SystemMetadata systemMetadata) {
     long stored =
