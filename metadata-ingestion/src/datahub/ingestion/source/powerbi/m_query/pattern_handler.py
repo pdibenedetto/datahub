@@ -1068,6 +1068,7 @@ class MSSqlLineage(TwoStepDataAccessPattern):
             )
 
         # It is a regular case of MS-SQL
+        logger.debug("Handling with regular case")
         return self.two_level_access_pattern(data_access_func_detail)
 
 
