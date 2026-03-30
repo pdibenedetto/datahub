@@ -35,7 +35,6 @@ from looker_sdk.sdk.api40.models import (
 import datahub.emitter.mce_builder as builder
 from datahub.configuration.common import ConfigurationError
 from datahub.emitter.mcp import MetadataChangeProposalWrapper
-from datahub.emitter.mcp_builder import mcps_from_mce
 from datahub.ingestion.api.common import PipelineContext
 from datahub.ingestion.api.decorators import (
     SupportStatus,
@@ -389,8 +388,11 @@ class LookerV2Source(TestableSource, StatefulIngestionSourceBase):
 
             # Stage 6: Emit tag entities (Dimension, Measure, Temporal, group_label)
             if self.config.tag_measures_and_dimensions:
-                for tag_mce in LookerUtil.get_tag_mces():
-                    yield from auto_workunit(mcps_from_mce(tag_mce))
+                for tag_urn, tag_props in LookerUtil.tag_definitions.items():
+                    yield MetadataChangeProposalWrapper(
+                        entityUrn=tag_urn,
+                        aspect=tag_props,
+                    ).as_workunit()
 
             # Stage 7: Emit Looker user ID → email platform resource
             with self._stage_timer("user_id_mapping"):
