@@ -213,7 +213,15 @@ def classify(changed_files: list[str], repo_root: Path) -> CIDecisions:
     registry = load_connector_registry(repo_root)
     import_graph = build_import_graph(repo_root, registry)
 
-    # Find which connector source directories were directly changed
+    # Find which connector source directories were directly changed.
+    # Only .py file changes count — non-code files (connector.yaml, .json, .md)
+    # don't affect runtime behavior and shouldn't trigger tests.
+    source_py_files = [
+        f
+        for f in changed_files
+        if f.startswith(CONNECTOR_SOURCE_PREFIX) and f.endswith(".py")
+    ]
+
     changed_source_dirs: set[str] = set()
     known_source_prefixes: list[str] = []
 
@@ -226,17 +234,16 @@ def classify(changed_files: list[str], repo_root: Path) -> CIDecisions:
 
         if any(
             f.startswith(f"metadata-ingestion/{p}")
-            for f in changed_files
+            for f in source_py_files
             for p in all_source_paths
         ):
             changed_source_dirs.add(source_dir)
 
-    # Check for source/ files not covered by any connector -> full suite
-    for f in changed_files:
-        if f.startswith(CONNECTOR_SOURCE_PREFIX):
-            if not any(f.startswith(p) for p in known_source_prefixes):
-                d.run_all_integration = True
-                return d
+    # Check for .py files under source/ not covered by any connector -> full suite
+    for f in source_py_files:
+        if not any(f.startswith(p) for p in known_source_prefixes):
+            d.run_all_integration = True
+            return d
 
     # Resolve import-derived dependencies and build test matrix
     test_paths: set[str] = set()
