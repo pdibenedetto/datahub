@@ -43,7 +43,6 @@ interface TimeBucket {
 interface FilterFieldBase {
     field: string;
     displayName: string;
-    icon?: React.ComponentType<any>;
     useDatePicker?: boolean; // In advanced filter section, don't use dropdown
     entity?: Entity; // if the filter itself is an entity ie. Structured Properties
 }

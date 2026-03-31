@@ -219,14 +219,12 @@ describe('useLoadAggregationOptions', () => {
         expect(result.current.options[0]).toEqual({
             value: 'snowflake',
             entity: null,
-            icon: undefined,
             count: 10,
             displayName: undefined,
         });
         expect(result.current.options[1]).toEqual({
             value: 'bigquery',
             entity: null,
-            icon: undefined,
             count: 5,
             displayName: undefined,
         });

@@ -10,7 +10,7 @@ import { getSubTypeIcon } from '@app/entityV2/shared/components/subtypes';
 import { DomainColoredIcon } from '@app/entityV2/shared/links/DomainColoredIcon';
 import { TagColor } from '@app/searchV2/filters/FilterOption';
 import { FACETS_TO_ENTITY_TYPES } from '@app/searchV2/filters/constants';
-import { ALL_FILTER_FIELDS, STRUCTURED_PROPERTY_FILTER } from '@app/searchV2/filters/field/fields';
+import { ALL_FILTER_FIELDS } from '@app/searchV2/filters/field/fields';
 import { convertBackendToFrontendOperatorType } from '@app/searchV2/filters/operator/operator';
 import {
     FieldType,
@@ -309,13 +309,6 @@ export function sortFacets(facetA: FacetMetadata, facetB: FacetMetadata, sortedF
     return sortedFacetFields.indexOf(facetA.field) - sortedFacetFields.indexOf(facetB.field);
 }
 
-export function getFilterDropdownIcon(field: string) {
-    if (field.startsWith(STRUCTURED_PROPERTIES_FILTER_NAME)) {
-        return STRUCTURED_PROPERTY_FILTER.icon;
-    }
-    return ALL_FILTER_FIELDS.find((filterField) => filterField.field === field)?.icon;
-}
-
 // maps aggregations and auto complete results to FilterOptionType[] and adds selected filter options if not already there
 export function getFilterOptions(
     filterField: string,
@@ -484,7 +477,6 @@ function getDynamicFilterField(field: string, availableFilters: FacetMetadata[])
         displayName: filterDisplayName || field,
         type: getFilterFieldType(field, filterAggregations || []),
         entityTypes: getFilterEntityTypes(field, filterAggregations),
-        icon: getFilterDropdownIcon(field),
         entity: associatedAvailableFilter?.entity || undefined,
     };
 }

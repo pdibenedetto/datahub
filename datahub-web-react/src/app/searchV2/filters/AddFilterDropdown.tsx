@@ -42,7 +42,6 @@ export default function AddFilterDropdown({ fields = DEFAULT_FILTER_FIELDS, onAd
                 key: field.field,
                 title: field.displayName,
                 type: 'item',
-                icon: field.icon,
                 children: [
                     {
                         key: `${field.field}-children`,

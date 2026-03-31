@@ -10,11 +10,7 @@ import { FilterScenarioType } from '@app/searchV2/filters/render/types';
 import { useFilterRendererRegistry } from '@app/searchV2/filters/render/useFilterRenderer';
 import { FilterPredicate } from '@app/searchV2/filters/types';
 import useSearchFilterAnalytics from '@app/searchV2/filters/useSearchFilterAnalytics';
-import {
-    getFilterDropdownIcon,
-    getNumActiveFiltersForGroupOfFilters,
-    useGetFilterDisplayName,
-} from '@app/searchV2/filters/utils';
+import { getNumActiveFiltersForGroupOfFilters, useGetFilterDisplayName } from '@app/searchV2/filters/utils';
 import { useAppConfig } from '@src/app/useAppConfig';
 
 import { FacetFilterInput, FacetMetadata } from '@types';
@@ -72,7 +68,6 @@ export default function MoreFilters({ filters, filterPredicates, activeFilters, 
                     ? filterRendererRegistry.getName(filter.field)
                     : getFilterDisplayName(filter),
                 type: 'item',
-                icon: getFilterDropdownIcon(filter.field),
                 children: [
                     {
                         key: `${filter.field}-children`,

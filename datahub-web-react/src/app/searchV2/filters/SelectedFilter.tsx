@@ -1,6 +1,5 @@
 /* eslint-disable import/no-cycle */
 import { CloseOutlined } from '@ant-design/icons';
-import { Icon } from '@components';
 import { Button } from 'antd';
 import React from 'react';
 import styled from 'styled-components/macro';
@@ -48,12 +47,6 @@ const Container = styled.div<{ $isCompact?: boolean }>`
     `}
 `;
 
-const IconWrapper = styled.div`
-    margin-right: 4px;
-    display: flex;
-    align-items: center;
-`;
-
 const FilterName = styled.div`
     margin-right: 2px;
     color: ${(props) => props.theme.colors.textBrand};
@@ -97,14 +90,7 @@ export default function SelectedFilter({
             data-testid={`active-filter-${field.field}`}
             key={`${field.field}-${operator}-${values.map((value) => value.value).join('-')}`}
         >
-            <FilterName>
-                {field.icon && (
-                    <IconWrapper>
-                        <Icon icon={field.icon} size="md" />
-                    </IconWrapper>
-                )}
-                {displayName || field.field}
-            </FilterName>
+            <FilterName>{displayName || field.field}</FilterName>
             <OperatorSelector predicate={predicate} onChangeOperator={onChangeOperator} />
             {showValueSelector && useDatePicker && (
                 <DatePicker
