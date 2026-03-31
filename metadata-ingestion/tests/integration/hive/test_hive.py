@@ -1,5 +1,6 @@
 import re
 import subprocess
+from datetime import datetime, timezone
 
 import pytest
 import time_machine
@@ -9,6 +10,7 @@ from datahub.testing import mce_helpers
 from tests.test_helpers.docker_helpers import wait_for_port
 
 FROZEN_TIME = "2020-04-14 07:00:00"
+FROZEN_TIME_DT = datetime.fromisoformat(FROZEN_TIME).replace(tzinfo=timezone.utc)
 
 data_platform = "hive"
 
@@ -55,7 +57,7 @@ def base_pipeline_config(events_file, db=None):
     }
 
 
-@time_machine.travel(FROZEN_TIME, tick=False)
+@time_machine.travel(FROZEN_TIME_DT, tick=False)
 def test_hive_ingest(
     loaded_hive, pytestconfig, test_resources_dir, tmp_path, mock_time
 ):
@@ -82,7 +84,7 @@ def test_hive_ingest(
     # Limitation - native data types for union does not show up as expected
 
 
-@time_machine.travel(FROZEN_TIME, tick=False)
+@time_machine.travel(FROZEN_TIME_DT, tick=False)
 @pytest.mark.integration_batch_1
 def test_hive_ingest_all_db(
     loaded_hive, pytestconfig, test_resources_dir, tmp_path, mock_time
@@ -110,7 +112,7 @@ def test_hive_ingest_all_db(
     # Limitation - native data types for union does not show up as expected
 
 
-@time_machine.travel(FROZEN_TIME, tick=False)
+@time_machine.travel(FROZEN_TIME_DT, tick=False)
 def test_hive_instance_check(loaded_hive, test_resources_dir, tmp_path, pytestconfig):
     instance: str = "production_warehouse"
 

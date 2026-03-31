@@ -1,4 +1,5 @@
 import subprocess
+from datetime import datetime, timezone
 
 import pytest
 import time_machine
@@ -10,6 +11,7 @@ from tests.test_helpers.click_helpers import run_datahub_cmd
 from tests.test_helpers.docker_helpers import wait_for_port
 
 FROZEN_TIME = "2020-04-14 07:00:00"
+FROZEN_TIME_DT = datetime.fromisoformat(FROZEN_TIME).replace(tzinfo=timezone.utc)
 MYSQL_PORT = 3306
 
 
@@ -56,7 +58,7 @@ def mysql_runner(docker_compose_runner, pytestconfig, test_resources_dir):
         ),
     ],
 )
-@time_machine.travel(FROZEN_TIME, tick=False)
+@time_machine.travel(FROZEN_TIME_DT, tick=False)
 @pytest.mark.integration
 def test_mysql_ingest_no_db(
     mysql_runner,
@@ -103,7 +105,7 @@ def test_mysql_ingest_no_db(
         ),
     ],
 )
-@time_machine.travel(FROZEN_TIME, tick=False)
+@time_machine.travel(FROZEN_TIME_DT, tick=False)
 @pytest.mark.integration
 def test_mysql_test_connection(mysql_runner, config_dict, is_success):
     report = test_connection_helpers.run_test_connection(MySQLSource, config_dict)

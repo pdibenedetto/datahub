@@ -29,6 +29,7 @@ to force running these tests.
 """
 
 import os
+from datetime import datetime, timezone
 from typing import Dict, Sequence
 
 import pytest
@@ -39,6 +40,7 @@ from datahub.testing import mce_helpers
 from tests.test_helpers.docker_helpers import wait_for_port
 
 FROZEN_TIME = "2020-04-14 07:00:00"
+FROZEN_TIME_DT = datetime.fromisoformat(FROZEN_TIME).replace(tzinfo=timezone.utc)
 
 # Skip these tests by default in CI - HMS 3.x Docker setup has platform compatibility issues
 # Run locally with: HMS3_EXTERNAL=1 pytest ... or force in CI with: RUN_HMS3_TESTS=1
@@ -226,7 +228,7 @@ IGNORE_PATHS_V2: Sequence[str] = [
 ]
 
 
-@time_machine.travel(FROZEN_TIME, tick=False)
+@time_machine.travel(FROZEN_TIME_DT, tick=False)
 def test_ingest_default_catalog(
     loaded_hms3, test_resources_dir, pytestconfig, tmp_path, mock_time
 ):
@@ -274,7 +276,7 @@ def test_ingest_default_catalog(
     )
 
 
-@time_machine.travel(FROZEN_TIME, tick=False)
+@time_machine.travel(FROZEN_TIME_DT, tick=False)
 def test_ingest_spark_catalog(
     loaded_hms3, test_resources_dir, pytestconfig, tmp_path, mock_time
 ):
@@ -323,7 +325,7 @@ def test_ingest_spark_catalog(
     )
 
 
-@time_machine.travel(FROZEN_TIME, tick=False)
+@time_machine.travel(FROZEN_TIME_DT, tick=False)
 def test_ingest_spark_catalog_with_catalog_ids(
     loaded_hms3, test_resources_dir, pytestconfig, tmp_path, mock_time
 ):
@@ -377,7 +379,7 @@ def test_ingest_spark_catalog_with_catalog_ids(
 # =============================================================================
 
 
-@time_machine.travel(FROZEN_TIME, tick=False)
+@time_machine.travel(FROZEN_TIME_DT, tick=False)
 def test_urn_without_catalog_name(loaded_hms3, tmp_path, mock_time):
     """
     Test that URNs do NOT include catalog name when include_catalog_name_in_ids=False.
@@ -413,7 +415,7 @@ def test_urn_without_catalog_name(loaded_hms3, tmp_path, mock_time):
     assert "spark_catalog.test_db.users" not in content
 
 
-@time_machine.travel(FROZEN_TIME, tick=False)
+@time_machine.travel(FROZEN_TIME_DT, tick=False)
 def test_urn_with_catalog_name(loaded_hms3, tmp_path, mock_time):
     """
     Test that URNs DO include catalog name when include_catalog_name_in_ids=True.
