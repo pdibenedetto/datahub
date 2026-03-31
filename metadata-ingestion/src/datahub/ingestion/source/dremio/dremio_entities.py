@@ -316,10 +316,7 @@ class DremioCatalog:
 
     def get_datasets(self) -> Iterator[DremioDataset]:
         """Get all Dremio datasets (tables and views) as an iterator."""
-        # Get containers directly without storing them
-        containers = self.get_containers()
-
-        for dataset_details in self.api.get_all_tables_and_columns(containers):
+        for dataset_details in self.api.get_all_tables_and_columns():
             dremio_dataset = DremioDataset(
                 dataset_details=dataset_details,
                 api_operations=self.api,

@@ -25,6 +25,7 @@ import pydantic_core
 from cached_property import cached_property
 from pydantic import BaseModel, ConfigDict, SecretStr, ValidationError, model_validator
 from pydantic.fields import Field
+from pydantic.functional_serializers import PlainSerializer
 from typing_extensions import Protocol, Self
 
 from datahub.configuration._config_enum import ConfigEnum as ConfigEnum
@@ -98,6 +99,18 @@ else:
     HiddenFromDocs = pydantic.json_schema.SkipJsonSchema
 
 LaxStr = Annotated[str, pydantic.BeforeValidator(lambda v: str(v))]
+
+# A SecretStr variant that serializes as plain str in model_dump()/model_dump_json().
+# Use for credential fields that must survive serialization boundaries (Kafka, SQS,
+# JSON) while still being masked in repr/str and registered with SecretRegistry.
+TransparentSecretStr = Annotated[
+    SecretStr,
+    PlainSerializer(
+        lambda v: v.get_secret_value() if isinstance(v, SecretStr) else str(v),
+        return_type=str,
+        when_used="always",
+    ),
+]
 
 # Context variable to track if we're inside a nested ConfigModel construction
 _inside_nested_config: contextvars.ContextVar[bool] = contextvars.ContextVar(

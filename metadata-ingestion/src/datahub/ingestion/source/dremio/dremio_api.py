@@ -181,6 +181,9 @@ class DremioAPIOperations:
         self.end_time = connection_args.end_time
         self.report = report
         self._chunk_size = 1000  # Sensible default to prevent OOM
+        # Cache for read-only /catalog/{id} responses — the same IDs are fetched
+        # multiple times during catalog traversal (container walk + dataset fetch).
+        self._catalog_cache: Dict[str, Any] = {}
         self.session = requests.Session()
         if connection_args.is_dremio_cloud:
             self.base_url = self._get_cloud_base_url(
@@ -272,7 +275,14 @@ class DremioAPIOperations:
             allowed_methods=["HEAD", "GET", "OPTIONS", "POST"],
             backoff_factor=1,
         )
-        adapter = HTTPAdapter(max_retries=retry_strategy)
+        # Pool size matches max_workers to prevent "Connection pool is full" warnings
+        # that serialise parallel catalog traversal into sequential requests.
+        pool_size = max(self._max_workers, 15)
+        adapter = HTTPAdapter(
+            max_retries=retry_strategy,
+            pool_connections=pool_size,
+            pool_maxsize=pool_size,
+        )
         self.session.mount("https://", adapter)
         self.session.mount("http://", adapter)
         self.session.headers.update({"Content-Type": "application/json"})
@@ -302,7 +312,9 @@ class DremioAPIOperations:
                     "Personal Access Token (PAT) is missing for cloud authentication."
                 )
             self.session.headers.update(
-                {"Authorization": f"Bearer {connection_args.password}"}
+                {
+                    "Authorization": f"Bearer {connection_args.password.get_secret_value()}"
+                }
             )
             logger.debug("Configured Dremio cloud API session to use PAT")
             return
@@ -313,7 +325,7 @@ class DremioAPIOperations:
                 if connection_args.authentication_method == "PAT":
                     self.session.headers.update(
                         {
-                            "Authorization": f"Bearer {connection_args.password}",
+                            "Authorization": f"Bearer {connection_args.password.get_secret_value() if connection_args.password else ''}",
                         }
                     )
                     logger.debug("Configured Dremio API session to use PAT")
@@ -331,7 +343,7 @@ class DremioAPIOperations:
                         data=json.dumps(
                             {
                                 "userName": connection_args.username,
-                                "password": connection_args.password,
+                                "password": connection_args.password.get_secret_value(),
                             }
                         ),
                         verify=self._verify,
@@ -392,8 +404,19 @@ class DremioAPIOperations:
                 ) from e
 
     def get(self, url: str) -> Dict:
-        """Send a GET request to the Dremio API."""
-        return self._request("GET", url)
+        """Send a GET request to the Dremio API.
+
+        Responses for /catalog/{id} (no sub-path) are cached in memory because
+        the catalog tree traversal and subsequent dataset fetch both walk the same
+        nodes, producing 4-6 redundant round-trips per catalog entry.
+        """
+        _cacheable = url.startswith("/catalog/") and url.count("/") == 2
+        if _cacheable and url in self._catalog_cache:
+            return self._catalog_cache[url]
+        result = self._request("GET", url)
+        if _cacheable:
+            self._catalog_cache[url] = result
+        return result
 
     def post(self, url: str, data: str) -> Dict:
         """Send a POST request to the Dremio API."""
@@ -759,19 +782,21 @@ class DremioAPIOperations:
         pattern_str = "|".join(f"({p})" for p in patterns)
         return f"AND {operator}({field}, '{pattern_str}')"
 
-    def get_all_tables_and_columns(
-        self, containers: Iterator["DremioContainer"]
-    ) -> Iterator[Dict]:
+    def get_all_tables_and_columns(self) -> Iterator[Dict]:
         """
-        Memory-efficient streaming version that yields tables one at a time.
-        Reduces memory usage for large datasets by processing results as they come.
+        Fetch all tables and columns using a single global query.
+
+        Runs one SQL query across the entire catalog rather than one per container.
+        This eliminates the ~10s Dremio planning overhead that was incurred for each
+        of thousands of containers (e.g. 10,000 containers × 10s = ~30 hours).
+        Results are still chunked with LIMIT/OFFSET to prevent Dremio OOM errors.
         """
         if self.edition == DremioEdition.ENTERPRISE:
-            query_template = DremioSQLQueries.QUERY_DATASETS_EE
+            query_template = DremioSQLQueries.QUERY_DATASETS_EE_GLOBAL
         elif self.edition == DremioEdition.CLOUD:
-            query_template = DremioSQLQueries.QUERY_DATASETS_CLOUD
+            query_template = DremioSQLQueries.QUERY_DATASETS_CLOUD_GLOBAL
         else:
-            query_template = DremioSQLQueries.QUERY_DATASETS_CE
+            query_template = DremioSQLQueries.QUERY_DATASETS_CE_GLOBAL
 
         schema_field = "CONCAT(REPLACE(REPLACE(REPLACE(UPPER(TABLE_SCHEMA), ', ', '.'), '[', ''), ']', ''))"
 
@@ -782,20 +807,127 @@ class DremioAPIOperations:
             self.deny_schema_pattern, schema_field, allow=False
         )
 
-        # Process each container's results with chunking to avoid memory buildup
-        for schema in containers:
+        yield from self._get_all_tables_global_chunked(
+            query_template, schema_condition, deny_schema_condition
+        )
+
+    def _get_all_tables_global_chunked(
+        self,
+        query_template: str,
+        schema_condition: str,
+        deny_schema_condition: str,
+    ) -> Iterator[Dict]:
+        """
+        Execute the global dataset query in LIMIT/OFFSET chunks and yield tables.
+
+        Chunking is preserved from the per-container approach to guard against
+        Dremio OOM on result sets that are too large to materialise at once.
+        """
+        chunk_size = self._chunk_size
+        offset = 0
+
+        while True:
+            limit_clause = f"LIMIT {chunk_size} OFFSET {offset}"
+            formatted_query = query_template.format(
+                schema_pattern=schema_condition,
+                deny_schema_pattern=deny_schema_condition,
+                limit_clause=limit_clause,
+            )
+
+            logger.info(
+                f"Fetching global dataset chunk (offset: {offset}, limit: {chunk_size})"
+            )
+
             try:
-                for table in self._get_container_tables_chunked(
-                    schema, query_template, schema_condition, deny_schema_condition
-                ):
-                    yield table
+                chunk_results = list(self.execute_query_iter(query=formatted_query))
+
+                if not chunk_results:
+                    logger.info("No more datasets found in global query")
+                    break
+
+                if self.edition == DremioEdition.COMMUNITY:
+                    for table in self.community_get_formatted_tables(chunk_results):
+                        yield table
+                else:
+                    column_dictionary: Dict[str, List[Dict]] = defaultdict(list)
+                    table_metadata: Dict[str, Dict] = {}
+
+                    for record in chunk_results:
+                        if not record.get("COLUMN_NAME"):
+                            continue
+
+                        table_full_path = record.get("FULL_TABLE_PATH")
+                        if not table_full_path:
+                            continue
+
+                        raw_ordinal = record.get("ORDINAL_POSITION")
+                        try:
+                            ordinal_pos = (
+                                int(raw_ordinal) if raw_ordinal is not None else 0
+                            )
+                        except (ValueError, TypeError):
+                            ordinal_pos = 0
+
+                        column_dictionary[table_full_path].append(
+                            {
+                                "name": record["COLUMN_NAME"],
+                                "ordinal_position": ordinal_pos,
+                                "is_nullable": record["IS_NULLABLE"],
+                                "data_type": record["DATA_TYPE"],
+                                "column_size": record["COLUMN_SIZE"],
+                            }
+                        )
+
+                        if table_full_path not in table_metadata:
+                            table_metadata[table_full_path] = {
+                                "TABLE_NAME": record.get("TABLE_NAME"),
+                                "TABLE_SCHEMA": record.get("TABLE_SCHEMA"),
+                                "VIEW_DEFINITION": record.get("VIEW_DEFINITION"),
+                                "RESOURCE_ID": record.get("RESOURCE_ID"),
+                                "LOCATION_ID": record.get("LOCATION_ID"),
+                                "OWNER": record.get("OWNER"),
+                                "OWNER_TYPE": record.get("OWNER_TYPE"),
+                                "CREATED": record.get("CREATED"),
+                                "FORMAT_TYPE": record.get("FORMAT_TYPE"),
+                            }
+
+                    for table_path, table_info in table_metadata.items():
+                        columns = sorted(
+                            column_dictionary[table_path],
+                            key=lambda col: col.get("ordinal_position", 0),
+                        )
+                        yield {
+                            "TABLE_NAME": table_info.get("TABLE_NAME"),
+                            "TABLE_SCHEMA": table_info.get("TABLE_SCHEMA"),
+                            "COLUMNS": columns,
+                            "VIEW_DEFINITION": table_info.get("VIEW_DEFINITION"),
+                            "RESOURCE_ID": table_info.get("RESOURCE_ID"),
+                            "LOCATION_ID": table_info.get("LOCATION_ID"),
+                            "OWNER": table_info.get("OWNER"),
+                            "OWNER_TYPE": table_info.get("OWNER_TYPE"),
+                            "CREATED": table_info.get("CREATED"),
+                            "FORMAT_TYPE": table_info.get("FORMAT_TYPE"),
+                        }
+
+                if len(chunk_results) < chunk_size:
+                    logger.info(
+                        f"Global dataset query complete. "
+                        f"Final chunk had {len(chunk_results)} results."
+                    )
+                    break
+
+                offset += chunk_size
+
             except DremioAPIException as e:
-                self.report.warning(
-                    message="Container has no tables or views",
-                    context=f"{schema.subclass} {schema.container_name}",
-                    exc=e,
-                )
-                continue
+                logger.error(f"Error in global dataset query at offset {offset}: {e}")
+                if "'rows'" in str(e):
+                    self.report.report_warning(
+                        f"Dremio crash detected during global dataset fetch "
+                        f"(KeyError: 'rows' - likely OOM). Current chunk_size: {chunk_size}. "
+                        f"Consider reducing chunk size if this persists.",
+                        context="global_dataset_fetch",
+                    )
+                break
 
     def _get_container_tables_chunked(
         self,

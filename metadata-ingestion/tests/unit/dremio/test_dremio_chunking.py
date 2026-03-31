@@ -44,10 +44,15 @@ class TestDremioChunking:
 
     def test_sql_queries_have_limit_clause_placeholder(self):
         """Test that all SQL queries have {limit_clause} placeholder"""
-        # Check dataset queries
+        # Check per-container dataset queries (kept for backward compat / future use)
         assert "{limit_clause}" in DremioSQLQueries.QUERY_DATASETS_CE
         assert "{limit_clause}" in DremioSQLQueries.QUERY_DATASETS_EE
         assert "{limit_clause}" in DremioSQLQueries.QUERY_DATASETS_CLOUD
+
+        # Check global dataset queries
+        assert "{limit_clause}" in DremioSQLQueries.QUERY_DATASETS_CE_GLOBAL
+        assert "{limit_clause}" in DremioSQLQueries.QUERY_DATASETS_EE_GLOBAL
+        assert "{limit_clause}" in DremioSQLQueries.QUERY_DATASETS_CLOUD_GLOBAL
 
         # Check job queries
         jobs_query = DremioSQLQueries.get_query_all_jobs()
@@ -55,6 +60,12 @@ class TestDremioChunking:
 
         jobs_query_cloud = DremioSQLQueries.get_query_all_jobs_cloud()
         assert "{limit_clause}" in jobs_query_cloud
+
+    def test_global_queries_have_no_container_name_placeholder(self):
+        """Global queries must not contain {container_name} — they fetch all datasets at once."""
+        assert "{container_name}" not in DremioSQLQueries.QUERY_DATASETS_EE_GLOBAL
+        assert "{container_name}" not in DremioSQLQueries.QUERY_DATASETS_CLOUD_GLOBAL
+        assert "{container_name}" not in DremioSQLQueries.QUERY_DATASETS_CE_GLOBAL
 
     def test_get_container_tables_chunked_single_chunk(self, dremio_api):
         """Test chunked table fetching with a single chunk"""
@@ -310,6 +321,109 @@ class TestDremioChunking:
         )  # First positional arg (message)
         assert "KeyError: 'rows'" in warning_call[0][0]
         assert warning_call[1]["context"] == "query_extraction"  # Named arg (context)
+
+    def test_get_all_tables_and_columns_uses_global_query(self, dremio_api):
+        """get_all_tables_and_columns should use the global query path, not per-container."""
+        dremio_api.edition = DremioEdition.ENTERPRISE
+        dremio_api.allow_schema_pattern = [".*"]
+        dremio_api.deny_schema_pattern = []
+
+        mock_results = [
+            {
+                "COLUMN_NAME": "col1",
+                "FULL_TABLE_PATH": "source.schema.table1",
+                "TABLE_NAME": "table1",
+                "TABLE_SCHEMA": "source.schema",
+                "ORDINAL_POSITION": 1,
+                "IS_NULLABLE": "YES",
+                "DATA_TYPE": "VARCHAR",
+                "COLUMN_SIZE": 255,
+                "RESOURCE_ID": "res1",
+                "LOCATION_ID": "loc1",
+                "VIEW_DEFINITION": None,
+                "OWNER": "user1",
+                "OWNER_TYPE": "USER",
+                "CREATED": "2024-01-01",
+                "FORMAT_TYPE": None,
+            }
+        ]
+
+        dremio_api._get_all_tables_global_chunked = Mock(
+            return_value=iter(mock_results)
+        )
+
+        tables = list(dremio_api.get_all_tables_and_columns())
+
+        dremio_api._get_all_tables_global_chunked.assert_called_once()
+        assert len(tables) == 1
+
+    def test_get_all_tables_global_chunked_single_chunk(self, dremio_api):
+        """Test global chunked table fetching with a single chunk."""
+        dremio_api.edition = DremioEdition.ENTERPRISE
+        dremio_api.allow_schema_pattern = [".*"]
+        dremio_api.deny_schema_pattern = []
+
+        mock_results = [
+            {
+                "COLUMN_NAME": "col1",
+                "FULL_TABLE_PATH": "source.table1",
+                "TABLE_NAME": "table1",
+                "TABLE_SCHEMA": "source",
+                "ORDINAL_POSITION": 1,
+                "IS_NULLABLE": "YES",
+                "DATA_TYPE": "VARCHAR",
+                "COLUMN_SIZE": 255,
+                "RESOURCE_ID": "res1",
+                "LOCATION_ID": "loc1",
+                "VIEW_DEFINITION": None,
+                "OWNER": None,
+                "OWNER_TYPE": None,
+                "CREATED": None,
+                "FORMAT_TYPE": None,
+            }
+        ]
+
+        dremio_api.execute_query_iter = Mock(return_value=iter(mock_results))
+
+        tables = list(
+            dremio_api._get_all_tables_global_chunked(
+                DremioSQLQueries.QUERY_DATASETS_EE_GLOBAL,
+                "",
+                "",
+            )
+        )
+
+        assert len(tables) == 1
+        assert tables[0]["TABLE_NAME"] == "table1"
+
+        query_arg = dremio_api.execute_query_iter.call_args[1]["query"]
+        assert "LIMIT 1000 OFFSET 0" in query_arg
+        # Global query must not have LOCATE container filter
+        assert "LOCATE" not in query_arg
+
+    def test_get_all_tables_global_chunked_oom_error(self, dremio_api):
+        """Global chunked fetch handles Dremio OOM crash gracefully."""
+        dremio_api.edition = DremioEdition.ENTERPRISE
+        dremio_api.allow_schema_pattern = [".*"]
+        dremio_api.deny_schema_pattern = []
+
+        dremio_api.execute_query_iter = Mock(
+            side_effect=DremioAPIException("Query error: 'rows'")
+        )
+
+        tables = list(
+            dremio_api._get_all_tables_global_chunked(
+                DremioSQLQueries.QUERY_DATASETS_EE_GLOBAL,
+                "",
+                "",
+            )
+        )
+
+        assert len(tables) == 0
+        dremio_api.report.report_warning.assert_called_once()
+        warning_call = dremio_api.report.report_warning.call_args
+        assert "Dremio crash detected" in warning_call[0][0]
+        assert warning_call[1]["context"] == "global_dataset_fetch"
 
     def test_extract_all_queries_uses_chunking(self, dremio_api):
         """Test that extract_all_queries uses chunked execution"""
