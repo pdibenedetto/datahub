@@ -91,7 +91,6 @@ def test_hive_thrift_ingest(
     test_resources_dir,
     pytestconfig,
     tmp_path,
-    mock_time,
     include_catalog_name_in_ids,
     simplify_nested_field_paths,
     use_dataset_pascalcase_subtype,
@@ -154,7 +153,7 @@ def test_hive_thrift_ingest(
 
 @time_machine.travel(FROZEN_TIME_DT, tick=False)
 def test_hive_thrift_instance_ingest(
-    loaded_hive_metastore, test_resources_dir, pytestconfig, tmp_path, mock_time
+    loaded_hive_metastore, test_resources_dir, pytestconfig, tmp_path
 ):
     """
     Test HMS Thrift ingestion with platform_instance.

@@ -58,9 +58,7 @@ def base_pipeline_config(events_file, db=None):
 
 
 @time_machine.travel(FROZEN_TIME_DT, tick=False)
-def test_hive_ingest(
-    loaded_hive, pytestconfig, test_resources_dir, tmp_path, mock_time
-):
+def test_hive_ingest(loaded_hive, pytestconfig, test_resources_dir, tmp_path):
     mce_out_file = "test_hive_ingest.json"
     events_file = tmp_path / mce_out_file
 
@@ -86,9 +84,7 @@ def test_hive_ingest(
 
 @time_machine.travel(FROZEN_TIME_DT, tick=False)
 @pytest.mark.integration_batch_1
-def test_hive_ingest_all_db(
-    loaded_hive, pytestconfig, test_resources_dir, tmp_path, mock_time
-):
+def test_hive_ingest_all_db(loaded_hive, pytestconfig, test_resources_dir, tmp_path):
     mce_out_file = "test_hive_ingest.json"
     events_file = tmp_path / mce_out_file
 

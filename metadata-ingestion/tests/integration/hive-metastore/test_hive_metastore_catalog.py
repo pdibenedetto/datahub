@@ -230,7 +230,7 @@ IGNORE_PATHS_V2: Sequence[str] = [
 
 @time_machine.travel(FROZEN_TIME_DT, tick=False)
 def test_ingest_default_catalog(
-    loaded_hms3, test_resources_dir, pytestconfig, tmp_path, mock_time
+    loaded_hms3, test_resources_dir, pytestconfig, tmp_path
 ):
     """
     Test ingestion from default 'hive' catalog (no catalog_name specified).
@@ -277,9 +277,7 @@ def test_ingest_default_catalog(
 
 
 @time_machine.travel(FROZEN_TIME_DT, tick=False)
-def test_ingest_spark_catalog(
-    loaded_hms3, test_resources_dir, pytestconfig, tmp_path, mock_time
-):
+def test_ingest_spark_catalog(loaded_hms3, test_resources_dir, pytestconfig, tmp_path):
     """
     Test ingestion from spark_catalog with include_catalog_name_in_ids=False.
 
@@ -327,7 +325,7 @@ def test_ingest_spark_catalog(
 
 @time_machine.travel(FROZEN_TIME_DT, tick=False)
 def test_ingest_spark_catalog_with_catalog_ids(
-    loaded_hms3, test_resources_dir, pytestconfig, tmp_path, mock_time
+    loaded_hms3, test_resources_dir, pytestconfig, tmp_path
 ):
     """
     Test ingestion from spark_catalog with include_catalog_name_in_ids=True.
@@ -380,7 +378,7 @@ def test_ingest_spark_catalog_with_catalog_ids(
 
 
 @time_machine.travel(FROZEN_TIME_DT, tick=False)
-def test_urn_without_catalog_name(loaded_hms3, tmp_path, mock_time):
+def test_urn_without_catalog_name(loaded_hms3, tmp_path):
     """
     Test that URNs do NOT include catalog name when include_catalog_name_in_ids=False.
     """
@@ -416,7 +414,7 @@ def test_urn_without_catalog_name(loaded_hms3, tmp_path, mock_time):
 
 
 @time_machine.travel(FROZEN_TIME_DT, tick=False)
-def test_urn_with_catalog_name(loaded_hms3, tmp_path, mock_time):
+def test_urn_with_catalog_name(loaded_hms3, tmp_path):
     """
     Test that URNs DO include catalog name when include_catalog_name_in_ids=True.
     """
