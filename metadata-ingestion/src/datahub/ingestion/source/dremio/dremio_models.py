@@ -22,21 +22,32 @@ class DremioDatasetType(StrEnum):
     TABLE = "Table"
 
 
+class DremioJobState(StrEnum):
+    """Dremio async job terminal and in-progress states."""
+
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    CANCELED = "CANCELED"
+    RUNNING = "RUNNING"
+
+
+class DremioOwnerType(StrEnum):
+    """Dremio dataset/space owner types."""
+
+    USER = "USER"
+    GROUP = "GROUP"
+
+
 class DremioContainerResponse(BaseModel):
     """Flexible Dremio container response that can parse various API response formats."""
 
-    # Core fields with flexible parsing
     id: Optional[str] = None
     name: str = Field(alias="name")
     container_type: str = Field(alias="containerType")
     path: Optional[List[str]] = Field(default=None)
-
-    # Optional fields that may or may not be present
     source_type: Optional[str] = Field(default=None, alias="type")
     root_path: Optional[str] = Field(default=None)
     database_name: Optional[str] = Field(default=None)
-
-    # Additional API fields that might be useful
     tag: Optional[str] = Field(default=None)
     created_at: Optional[str] = Field(default=None, alias="createdAt")
     root_container_type: Optional[str] = (
@@ -115,14 +126,11 @@ class DremioDatasetColumn(BaseModel):
 class DremioDatasetResponse(BaseModel):
     """Flexible Dremio dataset response that can parse various API response formats."""
 
-    # Core dataset fields
     resource_id: str = Field(alias="RESOURCE_ID")
     table_name: str = Field(alias="TABLE_NAME")
     table_schema: str = Field(alias="TABLE_SCHEMA")
     location_id: str = Field(alias="LOCATION_ID")
     columns: List[DremioDatasetColumn] = Field(default_factory=list, alias="COLUMNS")
-
-    # Optional fields
     view_definition: Optional[str] = Field(default=None, alias="VIEW_DEFINITION")
     owner: Optional[str] = Field(default=None, alias="OWNER")
     owner_type: Optional[str] = Field(default=None, alias="OWNER_TYPE")
@@ -191,7 +199,6 @@ class DremioColumnStats(BaseModel):
 class DremioProfilingResult(BaseModel):
     """Flexible Dremio profiling result that can parse various API response formats."""
 
-    # Core profiling fields
     row_count: int = Field(default=0, alias="row_count")
     column_count: int = Field(default=0, alias="column_count")
 
@@ -201,13 +208,8 @@ class DremioProfilingResult(BaseModel):
 
     def get_column_stats(self, column_name: str) -> DremioColumnStats:
         """Get column statistics as a structured object with dot notation."""
-        # Extract all stats for this column from the raw data
         column_data = {}
-
-        # Use model_dump to get all fields including extra ones
         all_fields = self.model_dump()
-
-        # Map the dynamic fields to our structured model
         for field_name, value in all_fields.items():
             if field_name.startswith(f"{column_name}_"):
                 stat_name = field_name[len(f"{column_name}_") :]

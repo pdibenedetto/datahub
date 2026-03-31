@@ -20,13 +20,23 @@ from datahub.ingestion.source.dremio.dremio_models import (
     DremioDatasetType,
     DremioEntityContainerType,
 )
+from datahub.utilities.str_enum import StrEnum
 
 logger = logging.getLogger(__name__)
 
 
-QUERY_TYPES = {
-    "DML": ["CREATE", "DELETE", "INSERT", "MERGE", "UPDATE"],
-    "DDL": [
+class DremioQueryType(StrEnum):
+    """Query classification returned by DremioQuery._get_query_type()."""
+
+    SELECT = "SELECT"
+    DML = "DML"
+    DDL = "DDL"
+
+
+# Internal lookup table mapping query type categories to their leading SQL operators.
+_QUERY_OPERATORS: Dict[str, List[str]] = {
+    DremioQueryType.DML: ["CREATE", "DELETE", "INSERT", "MERGE", "UPDATE"],
+    DremioQueryType.DDL: [
         "ALTER BRANCH",
         "ALTER PIPE",
         "ALTER SOURCE",
@@ -71,8 +81,7 @@ QUERY_TYPES = {
         "VACUUM CATALOG",
         "VACUUM TABLE",
     ],
-    "SELECT": ["SELECT", "WITH"],
-    "DATA_MANIPULATION": ["INSERT INTO", "MERGE INTO", "CREATE TABLE"],
+    DremioQueryType.SELECT: ["SELECT", "WITH"],
 }
 
 
@@ -94,7 +103,7 @@ class DremioGlossaryTerm:
 
 class DremioQuery:
     query_without_comments: str
-    query_type: str
+    query_type: DremioQueryType
     query_subtype: str
     affected_dataset: str
 
@@ -129,22 +138,24 @@ class DremioQuery:
     def _get_query(self, query: str) -> str:
         return str(query).replace("'", "'")
 
-    def _get_query_type(self) -> str:
+    def _get_query_type(self) -> DremioQueryType:
         query_operator = re.split(
             pattern=r"\s+",
             string=self.query_without_comments.strip(),
             maxsplit=1,
         )[0]
 
-        if query_operator in QUERY_TYPES["SELECT"]:
-            return "SELECT"
-        if query_operator in QUERY_TYPES["DML"]:
-            return "DML"
-        return "DDL"
+        if query_operator in _QUERY_OPERATORS[DremioQueryType.SELECT]:
+            return DremioQueryType.SELECT
+        if query_operator in _QUERY_OPERATORS[DremioQueryType.DML]:
+            return DremioQueryType.DML
+        return DremioQueryType.DDL
 
     def _get_query_subtype(self) -> str:
         for query_operator in (
-            QUERY_TYPES["SELECT"] + QUERY_TYPES["DML"] + QUERY_TYPES["DDL"]
+            _QUERY_OPERATORS[DremioQueryType.SELECT]
+            + _QUERY_OPERATORS[DremioQueryType.DML]
+            + _QUERY_OPERATORS[DremioQueryType.DDL]
         ):
             if self.query_without_comments.upper().startswith(query_operator):
                 return query_operator
@@ -194,10 +205,7 @@ class DremioDataset:
         dataset_details: Dict[str, Any],
         api_operations: DremioAPIOperations,
     ):
-        # Parse dataset details using Pydantic model for flexible API response handling
         self._dataset_response = DremioDatasetResponse.model_validate(dataset_details)
-
-        # Use dot notation to access parsed data
         self.glossary_terms: List[DremioGlossaryTerm] = []
         self.resource_id = self._dataset_response.resource_id
         self.resource_name = self._dataset_response.table_name
@@ -205,6 +213,12 @@ class DremioDataset:
         self.location_id = self._dataset_response.location_id
         self.columns = self._dataset_response.columns
         self.sql_definition = self._dataset_response.view_definition
+
+        # Safe defaults — populated conditionally below depending on edition and type
+        self.default_schema: Optional[str] = None
+        self.created: str = ""
+        self.format_type: Optional[str] = None
+        self.parents: Optional[List[str]] = None
 
         if self.sql_definition:
             self.dataset_type = DremioDatasetType.VIEW
@@ -383,9 +397,20 @@ class DremioCatalog:
         ]
         return all(query.get(field) for field in required_fields)
 
-    def get_queries(self) -> Iterator[DremioQuery]:
-        """Get all valid Dremio queries for lineage analysis."""
-        for query in self.api.extract_all_queries():
+    def get_queries(
+        self,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+    ) -> Iterator[DremioQuery]:
+        """Get all valid Dremio queries for lineage analysis.
+
+        Optional start_time/end_time override the config-level time window. This
+        is used by the stateful time-window handler to advance start_time to the
+        previous run's end_time, so only new job history is re-processed.
+        """
+        for query in self.api.extract_all_queries(
+            start_time=start_time, end_time=end_time
+        ):
             if not self.is_valid_query(query):
                 continue
             yield DremioQuery(

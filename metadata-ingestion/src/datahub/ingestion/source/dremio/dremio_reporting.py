@@ -42,15 +42,9 @@ class DremioSourceReport(
         pass
 
     def report_container_scanned(self, name: str) -> None:
-        """
-        Record that a container was successfully scanned
-        """
         self.containers_scanned += 1
 
     def report_container_filtered(self, container_name: str) -> None:
-        """
-        Record that a container was filtered out
-        """
         self.containers_filtered += 1
         self.report_dropped(container_name)
 

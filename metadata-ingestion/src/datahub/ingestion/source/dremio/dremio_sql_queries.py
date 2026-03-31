@@ -505,16 +505,7 @@ class DremioSQLQueries:
         start_timestamp_millis: Optional[str] = None,
         end_timestamp_millis: Optional[str] = None,
     ) -> str:
-        """
-        Get query for all jobs with optional time filtering.
-
-        Args:
-            start_timestamp_millis: Start timestamp in format 'YYYY-MM-DD HH:MM:SS.mmm' (defaults to 1 day ago)
-            end_timestamp_millis: End timestamp in format 'YYYY-MM-DD HH:MM:SS.mmm' (defaults to now)
-
-        Returns:
-            SQL query string with time filtering applied
-        """
+        """Get query for all jobs with optional time filtering."""
         if start_timestamp_millis is None:
             start_timestamp_millis = (
                 DremioSQLQueries._get_default_start_timestamp_millis()
@@ -547,16 +538,7 @@ class DremioSQLQueries:
         start_timestamp_millis: Optional[str] = None,
         end_timestamp_millis: Optional[str] = None,
     ) -> str:
-        """
-        Get query for all jobs in Dremio Cloud with optional time filtering.
-
-        Args:
-            start_timestamp_millis: Start timestamp in format 'YYYY-MM-DD HH:MM:SS.mmm' (defaults to 7 days ago)
-            end_timestamp_millis: End timestamp in format 'YYYY-MM-DD HH:MM:SS.mmm' (defaults to now)
-
-        Returns:
-            SQL query string with time filtering applied
-        """
+        """Get query for all jobs in Dremio Cloud with optional time filtering."""
         if start_timestamp_millis is None:
             start_timestamp_millis = (
                 DremioSQLQueries._get_default_start_timestamp_millis()
@@ -583,18 +565,6 @@ class DremioSQLQueries:
         ORDER BY submitted_ts DESC
         {{limit_clause}}
         """
-
-    QUERY_TYPES = [
-        "ALTER TABLE",
-        "ALTER VIEW",
-        "COPY INTO",
-        "CREATE TABLE",
-        "CREATE VIEW",
-        "DROP TABLE",
-        "DROP VIEW",
-        "SELECT",
-        "WITH",
-    ]
 
     PROFILE_COLUMNS = """
     SELECT

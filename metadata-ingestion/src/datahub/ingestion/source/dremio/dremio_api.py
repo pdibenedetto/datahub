@@ -4,6 +4,7 @@ import logging
 import re
 import warnings
 from collections import defaultdict
+from datetime import datetime
 from enum import Enum
 from itertools import product
 from time import sleep, time
@@ -24,6 +25,7 @@ from datahub.ingestion.source.dremio.dremio_datahub_source_mapping import (
 from datahub.ingestion.source.dremio.dremio_models import (
     DremioContainerResponse,
     DremioEntityContainerType,
+    DremioJobState,
 )
 from datahub.ingestion.source.dremio.dremio_reporting import DremioSourceReport
 from datahub.ingestion.source.dremio.dremio_sql_queries import DremioSQLQueries
@@ -32,16 +34,13 @@ from datahub.utilities.perf_timer import PerfTimer
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from datahub.ingestion.source.dremio.dremio_entities import DremioContainer
+    pass
 
-# System table patterns to exclude (similar to BigQuery's approach)
-# Note: These patterns are applied to lowercase names for case-insensitive matching
-# Conservative patterns that only match actual system schemas/tables
 DREMIO_SYSTEM_TABLES_PATTERN = [
-    r"^information_schema$",  # Exact INFORMATION_SCHEMA schema match
-    r"^sys$",  # Exact SYS schema match
-    r"^information_schema\..*",  # Tables in INFORMATION_SCHEMA schema
-    r"^sys\..*",  # Tables in SYS schema
+    r"^information_schema$",
+    r"^sys$",
+    r"^information_schema\..*",
+    r"^sys\..*",
 ]
 
 
@@ -422,6 +421,35 @@ class DremioAPIOperations:
         """Send a POST request to the Dremio API."""
         return self._request("POST", url, data=data)
 
+    def _wait_for_job(self, job_id: str, timeout: int) -> None:
+        """Poll until a Dremio job reaches a terminal state.
+
+        Uses adaptive backoff (1 s → 10 s) so fast queries aren't penalised
+        by a fixed sleep and slow queries don't hammer the status endpoint.
+        """
+        start = time()
+        wait = 1.0
+        while True:
+            status = self.get_job_status(job_id)
+            state = status["jobState"]
+            if state == DremioJobState.COMPLETED:
+                return
+            elif state == DremioJobState.FAILED:
+                raise RuntimeError(
+                    f"Query failed: {status.get('errorMessage', 'Unknown error')}"
+                )
+            elif state == DremioJobState.CANCELED:
+                raise RuntimeError("Query was canceled")
+
+            if time() - start > timeout:
+                self.cancel_query(job_id)
+                raise DremioAPIException(
+                    f"Query execution timed out after {timeout} seconds"
+                )
+
+            sleep(wait)
+            wait = min(wait * 1.5, 10.0)
+
     def execute_query(self, query: str, timeout: int = 3600) -> List[Dict[str, Any]]:
         """Execute SQL query with timeout and error handling"""
         try:
@@ -436,46 +464,18 @@ class DremioAPIOperations:
                     raise DremioAPIException(f"SQL Error: {response['errorMessage']}")
 
                 job_id = response["id"]
-
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(self.fetch_results, job_id)
-                    try:
-                        result = future.result(timeout=timeout)
-                        logger.info(
-                            f"Query executed in {timer.elapsed_seconds()} seconds with {len(result)} results"
-                        )
-                        return result
-                    except concurrent.futures.TimeoutError:
-                        self.cancel_query(job_id)
-                        raise DremioAPIException(
-                            f"Query execution timed out after {timeout} seconds"
-                        ) from None
-                    except RuntimeError as e:
-                        raise DremioAPIException() from e
+                try:
+                    self._wait_for_job(job_id, timeout)
+                except RuntimeError as e:
+                    raise DremioAPIException() from e
+                result = self._fetch_all_results(job_id)
+                logger.info(
+                    f"Query executed in {timer.elapsed_seconds()} seconds with {len(result)} results"
+                )
+                return result
 
         except requests.RequestException as e:
             raise DremioAPIException("Error executing query") from e
-
-    def fetch_results(self, job_id: str) -> List[Dict]:
-        """Fetch job results with status checking"""
-        start_time = time()
-        while True:
-            status = self.get_job_status(job_id)
-            if status["jobState"] == "COMPLETED":
-                break
-            elif status["jobState"] == "FAILED":
-                error_message = status.get("errorMessage", "Unknown error")
-                raise RuntimeError(f"Query failed: {error_message}")
-            elif status["jobState"] == "CANCELED":
-                raise RuntimeError("Query was canceled")
-
-            if time() - start_time > self._timeout:
-                self.cancel_query(job_id)
-                raise TimeoutError("Query execution timed out while fetching results")
-
-            sleep(3)
-
-        return self._fetch_all_results(job_id)
 
     def _fetch_all_results(self, job_id: str) -> List[Dict]:
         """Fetch all results for a completed job"""
@@ -486,100 +486,68 @@ class DremioAPIOperations:
         while True:
             result = self.get_job_result(job_id, offset, limit)
 
-            # Handle cases where API response doesn't contain 'rows' key
-            # This can happen with OOM errors or when no rows are returned
             if "rows" not in result:
                 logger.warning(
                     f"API response for job {job_id} missing 'rows' key. "
                     f"Response keys: {list(result.keys())}"
                 )
-                # Check for error conditions
                 if "errorMessage" in result:
                     raise DremioAPIException(f"Query error: {result['errorMessage']}")
                 elif "message" in result:
                     logger.warning(
                         f"Query warning for job {job_id}: {result['message']}"
                     )
-                # Return empty list if no rows key and no error
                 break
 
-            # Handle empty rows response
             result_rows = result["rows"]
             if not result_rows:
-                logger.debug(
-                    f"No more rows returned for job {job_id} at offset {offset}"
-                )
                 break
 
             rows.extend(result_rows)
-
-            # Check actual returned rows to determine if we should continue
-            actual_rows_returned = len(result_rows)
-            if actual_rows_returned == 0:
-                logger.debug(f"Query returned no rows for job {job_id}")
-                break
-
-            offset = offset + actual_rows_returned
-            # If we got fewer rows than requested, we've reached the end
-            if actual_rows_returned < limit:
+            actual = len(result_rows)
+            offset += actual
+            if actual < limit:
                 break
 
         logger.info(f"Fetched {len(rows)} total rows for job {job_id}")
         return rows
 
     def _fetch_results_iter(self, job_id: str) -> Iterator[Dict]:
-        """
-        Fetch job results in a streaming fashion to reduce memory usage.
-        Yields individual rows instead of collecting all in memory.
-        """
+        """Fetch job results as a streaming iterator to reduce peak memory usage."""
         limit = 500
         offset = 0
-        total_rows_fetched = 0
+        total = 0
 
         while True:
             result = self.get_job_result(job_id, offset, limit)
 
-            # Handle cases where API response doesn't contain 'rows' key
             if "rows" not in result:
                 logger.warning(
                     f"API response for job {job_id} missing 'rows' key. "
                     f"Response keys: {list(result.keys())}"
                 )
-                # Check for error conditions
                 if "errorMessage" in result:
                     raise DremioAPIException(f"Query error: {result['errorMessage']}")
                 elif "message" in result:
                     logger.warning(
                         f"Query warning for job {job_id}: {result['message']}"
                     )
-                # Stop iteration if no rows key and no error
                 break
 
-            # Handle empty rows response
             result_rows = result["rows"]
             if not result_rows:
-                logger.debug(
-                    f"No more rows returned for job {job_id} at offset {offset}"
-                )
                 break
 
-            # Yield individual rows instead of collecting them
             for row in result_rows:
                 yield row
-                total_rows_fetched += 1
+                total += 1
 
-            # Check actual returned rows to determine if we should continue
-            actual_rows_returned = len(result_rows)
-            if actual_rows_returned == 0:
-                logger.debug(f"Query returned no rows for job {job_id}")
+            actual = len(result_rows)
+            offset += actual
+            if actual < limit:
                 break
 
-            offset = offset + actual_rows_returned
-            # If we got fewer rows than requested, we've reached the end
-            if actual_rows_returned < limit:
-                break
-
-        logger.info(f"Streamed {total_rows_fetched} total rows for job {job_id}")
+        logger.info(f"Streamed {total} total rows for job {job_id}")
 
     def execute_query_iter(
         self, query: str, timeout: int = 3600
@@ -597,32 +565,13 @@ class DremioAPIOperations:
                     raise DremioAPIException(f"SQL Error: {response['errorMessage']}")
 
                 job_id = response["id"]
-
-                # Wait for job completion
-                start_time = time()
-                while True:
-                    status = self.get_job_status(job_id)
-                    if status["jobState"] == "COMPLETED":
-                        break
-                    elif status["jobState"] == "FAILED":
-                        error_message = status.get("errorMessage", "Unknown error")
-                        raise RuntimeError(f"Query failed: {error_message}")
-                    elif status["jobState"] == "CANCELED":
-                        raise RuntimeError("Query was canceled")
-
-                    if time() - start_time > timeout:
-                        self.cancel_query(job_id)
-                        raise DremioAPIException(
-                            f"Query execution timed out after {timeout} seconds"
-                        )
-
-                    sleep(3)
-
+                try:
+                    self._wait_for_job(job_id, timeout)
+                except RuntimeError as e:
+                    raise DremioAPIException() from e
                 logger.info(
                     f"Query job completed in {timer.elapsed_seconds()} seconds, starting streaming"
                 )
-
-                # Return streaming iterator
                 return self._fetch_results_iter(job_id)
 
         except requests.RequestException as e:
@@ -820,8 +769,7 @@ class DremioAPIOperations:
         """
         Execute the global dataset query in LIMIT/OFFSET chunks and yield tables.
 
-        Chunking is preserved from the per-container approach to guard against
-        Dremio OOM on result sets that are too large to materialise at once.
+        Chunking guards against Dremio OOM on result sets too large to materialise at once.
         """
         chunk_size = self._chunk_size
         offset = 0
@@ -910,10 +858,6 @@ class DremioAPIOperations:
                         }
 
                 if len(chunk_results) < chunk_size:
-                    logger.info(
-                        f"Global dataset query complete. "
-                        f"Final chunk had {len(chunk_results)} results."
-                    )
                     break
 
                 offset += chunk_size
@@ -927,147 +871,6 @@ class DremioAPIOperations:
                         f"Consider reducing chunk size if this persists.",
                         context="global_dataset_fetch",
                     )
-                break
-
-    def _get_container_tables_chunked(
-        self,
-        schema: "DremioContainer",
-        query_template: str,
-        schema_condition: str,
-        deny_schema_condition: str,
-    ) -> Iterator[Dict]:
-        """
-        Fetch tables for a container using chunked queries with LIMIT and OFFSET
-        to prevent Dremio OOM errors.
-        """
-        chunk_size = self._chunk_size
-        offset = 0
-
-        while True:
-            # Create chunked query with LIMIT and OFFSET
-            limit_clause = f"LIMIT {chunk_size} OFFSET {offset}"
-
-            formatted_query = query_template.format(
-                schema_pattern=schema_condition,
-                deny_schema_pattern=deny_schema_condition,
-                container_name=schema.container_name.lower(),
-                limit_clause=limit_clause,
-            )
-
-            logger.info(
-                f"Fetching chunk of {chunk_size} tables for container {schema.container_name} "
-                f"(offset: {offset})"
-            )
-
-            try:
-                container_results = list(self.execute_query_iter(query=formatted_query))
-
-                if not container_results:
-                    # No more results
-                    logger.info(
-                        f"No more tables found for container {schema.container_name}"
-                    )
-                    break
-
-                if self.edition == DremioEdition.COMMUNITY:
-                    # Process community edition results
-                    formatted_tables = self.community_get_formatted_tables(
-                        container_results
-                    )
-                    for table in formatted_tables:
-                        yield table
-                else:
-                    # Process enterprise/cloud edition results
-                    column_dictionary: Dict[str, List[Dict]] = defaultdict(list)
-                    table_metadata: Dict[str, Dict] = {}
-
-                    for record in container_results:
-                        if not record.get("COLUMN_NAME"):
-                            continue
-
-                        table_full_path = record.get("FULL_TABLE_PATH")
-                        if not table_full_path:
-                            continue
-
-                        # Store column information
-                        # Ensure ordinal_position is always an integer for proper sorting
-                        raw_ordinal = record.get("ORDINAL_POSITION")
-                        try:
-                            ordinal_pos = (
-                                int(raw_ordinal) if raw_ordinal is not None else 0
-                            )
-                        except (ValueError, TypeError):
-                            ordinal_pos = 0
-
-                        column_dictionary[table_full_path].append(
-                            {
-                                "name": record["COLUMN_NAME"],
-                                "ordinal_position": ordinal_pos,
-                                "is_nullable": record["IS_NULLABLE"],
-                                "data_type": record["DATA_TYPE"],
-                                "column_size": record["COLUMN_SIZE"],
-                            }
-                        )
-
-                        # Store table metadata (only once per table)
-                        if table_full_path not in table_metadata:
-                            table_metadata[table_full_path] = {
-                                "TABLE_NAME": record.get("TABLE_NAME"),
-                                "TABLE_SCHEMA": record.get("TABLE_SCHEMA"),
-                                "VIEW_DEFINITION": record.get("VIEW_DEFINITION"),
-                                "RESOURCE_ID": record.get("RESOURCE_ID"),
-                                "LOCATION_ID": record.get("LOCATION_ID"),
-                                "OWNER": record.get("OWNER"),
-                                "OWNER_TYPE": record.get("OWNER_TYPE"),
-                                "CREATED": record.get("CREATED"),
-                                "FORMAT_TYPE": record.get("FORMAT_TYPE"),
-                            }
-
-                    # Yield tables one at a time
-                    for table_path, table_info in table_metadata.items():
-                        # Sort columns by ordinal_position to ensure consistent ordering
-                        columns = sorted(
-                            column_dictionary[table_path],
-                            key=lambda col: col.get("ordinal_position", 0),
-                        )
-                        yield {
-                            "TABLE_NAME": table_info.get("TABLE_NAME"),
-                            "TABLE_SCHEMA": table_info.get("TABLE_SCHEMA"),
-                            "COLUMNS": columns,
-                            "VIEW_DEFINITION": table_info.get("VIEW_DEFINITION"),
-                            "RESOURCE_ID": table_info.get("RESOURCE_ID"),
-                            "LOCATION_ID": table_info.get("LOCATION_ID"),
-                            "OWNER": table_info.get("OWNER"),
-                            "OWNER_TYPE": table_info.get("OWNER_TYPE"),
-                            "CREATED": table_info.get("CREATED"),
-                            "FORMAT_TYPE": table_info.get("FORMAT_TYPE"),
-                        }
-
-                # If we got fewer results than chunk_size, we're done
-                if len(container_results) < chunk_size:
-                    logger.info(
-                        f"Completed fetching tables for container {schema.container_name}. "
-                        f"Final chunk had {len(container_results)} results."
-                    )
-                    break
-
-                offset += chunk_size
-
-            except DremioAPIException as e:
-                logger.error(
-                    f"Error in chunked query for container {schema.container_name} "
-                    f"at offset {offset}: {e}"
-                )
-                # Check if it's the KeyError: 'rows' that indicates Dremio crash/OOM
-                if "'rows'" in str(e):
-                    self.report.report_warning(
-                        f"Dremio crash detected for container {schema.container_name} "
-                        f"(KeyError: 'rows' - likely OOM). Current chunk_size: {chunk_size}. "
-                        f"Consider reducing chunk size if this persists.",
-                        context=f"container:{schema.container_name}",
-                        exc=e,
-                    )
-                # Stop processing this container on error
                 break
 
     def validate_schema_format(self, schema):
@@ -1106,18 +909,31 @@ class DremioAPIOperations:
 
         return parents_list
 
-    def extract_all_queries(self) -> Iterator[Dict[str, Any]]:
+    def extract_all_queries(
+        self,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+    ) -> Iterator[Dict[str, Any]]:
         """
         Memory-efficient streaming version for extracting query results.
-        """
-        # Convert datetime objects to string format for SQL queries
-        start_timestamp_str = None
-        end_timestamp_str = None
 
-        if self.start_time:
-            start_timestamp_str = self.start_time.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-        if self.end_time:
-            end_timestamp_str = self.end_time.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        Optional start_time/end_time override the instance-level window (used by
+        the stateful time-window handler to advance start_time to the previous
+        run's end_time, avoiding redundant re-processing).
+        """
+        effective_start = start_time if start_time is not None else self.start_time
+        effective_end = end_time if end_time is not None else self.end_time
+
+        start_timestamp_str = (
+            effective_start.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+            if effective_start
+            else None
+        )
+        end_timestamp_str = (
+            effective_end.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+            if effective_end
+            else None
+        )
 
         if self.edition == DremioEdition.CLOUD:
             jobs_query = DremioSQLQueries.get_query_all_jobs_cloud(
@@ -1134,17 +950,14 @@ class DremioAPIOperations:
         return self._get_queries_chunked(jobs_query)
 
     def _get_queries_chunked(self, base_query: str) -> Iterator[Dict[str, Any]]:
-        """
-        Fetch queries using chunked execution with LIMIT and OFFSET to prevent Dremio OOM.
-        """
+        """Fetch queries using chunked LIMIT/OFFSET execution to prevent Dremio OOM."""
         chunk_size = self._chunk_size
         offset = 0
 
         while True:
-            # Create chunked query with LIMIT and OFFSET
-            limit_clause = f"LIMIT {chunk_size} OFFSET {offset}"
-
-            chunked_query = base_query.format(limit_clause=limit_clause)
+            chunked_query = base_query.format(
+                limit_clause=f"LIMIT {chunk_size} OFFSET {offset}"
+            )
 
             logger.info(f"Fetching chunk of {chunk_size} queries (offset: {offset})")
 
@@ -1155,14 +968,9 @@ class DremioAPIOperations:
                     logger.info("No more queries to fetch")
                     break
 
-                for query_result in chunk_results:
-                    yield query_result
+                yield from chunk_results
 
-                # If we got fewer results than chunk_size, we're done
                 if len(chunk_results) < chunk_size:
-                    logger.info(
-                        f"Completed fetching queries. Final chunk had {len(chunk_results)} results."
-                    )
                     break
 
                 offset += chunk_size
@@ -1171,7 +979,6 @@ class DremioAPIOperations:
                 logger.error(
                     f"Error in chunked query extraction at offset {offset}: {e}"
                 )
-                # Check if it's the KeyError: 'rows' that indicates Dremio crash/OOM
                 if "'rows'" in str(e):
                     self.report.report_warning(
                         f"Dremio crash detected during query extraction "

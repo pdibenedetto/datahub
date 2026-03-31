@@ -15,7 +15,10 @@ from datahub.configuration.source_common import (
     PlatformInstanceConfigMixin,
 )
 from datahub.configuration.time_window_config import BaseTimeWindowConfig
-from datahub.ingestion.source.ge_profiling_config import GEProfilingBaseConfig
+from datahub.ingestion.api.incremental_properties_helper import (
+    IncrementalPropertiesConfigMixin,
+)
+from datahub.ingestion.source.ge_profiling_config import GEProfilingConfig
 from datahub.ingestion.source.state.stateful_ingestion_base import (
     StatefulIngestionConfigBase,
     StatefulLineageConfigMixin,
@@ -104,7 +107,7 @@ class DremioConnectionConfig(ConfigModel):
         return value
 
 
-class ProfileConfig(GEProfilingBaseConfig):
+class ProfileConfig(GEProfilingConfig):
     query_timeout: int = Field(
         default=300, description="Time before cancelling Dremio profiling query"
     )
@@ -129,6 +132,7 @@ class DremioSourceConfig(
     BaseTimeWindowConfig,
     StatefulLineageConfigMixin,
     StatefulProfilingConfigMixin,
+    IncrementalPropertiesConfigMixin,
     EnvConfigMixin,
     PlatformInstanceConfigMixin,
 ):
@@ -153,7 +157,6 @@ class DremioSourceConfig(
         description="Mappings from Dremio sources to DataHub platforms and datasets.",
     )
 
-    # Entity Filters
     schema_pattern: AllowDenyPattern = Field(
         default=AllowDenyPattern.allow_all(),
         description="Regex patterns for schemas to filter",
@@ -164,7 +167,6 @@ class DremioSourceConfig(
         description="Regex patterns for tables and views to filter in ingestion. Specify regex to match the entire table name in dremio.schema.table format. e.g. to match all tables starting with customer in Customer database and public schema, use the regex 'dremio.public.customer.*'",
     )
 
-    # Profiling
     profile_pattern: AllowDenyPattern = Field(
         default=AllowDenyPattern.allow_all(),
         description="Regex patterns for tables to profile",
@@ -179,7 +181,6 @@ class DremioSourceConfig(
             self.profiling.operation_config
         )
 
-    # Advanced Configs
     max_workers: int = Field(
         default=5 * (os.cpu_count() or 4),
         description="Number of worker threads to use for parallel processing",
@@ -188,6 +189,20 @@ class DremioSourceConfig(
     include_query_lineage: bool = Field(
         default=False,
         description="Whether to include query-based lineage information.",
+    )
+
+    incremental_lineage: bool = Field(
+        default=True,
+        description="When enabled, lineage aspects are emitted as PATCH operations rather than full "
+        "overwrites. This preserves any lineage edges that were manually added in DataHub "
+        "between runs. Disable if you want each run to fully replace lineage.",
+    )
+
+    enable_stateful_time_window: bool = Field(
+        default=False,
+        description="Enable stateful time window tracking for query lineage/usage extraction. "
+        "When enabled, subsequent runs will skip time windows already fully processed, "
+        "avoiding redundant API calls. Requires stateful_ingestion to be configured.",
     )
 
     ingest_owner: bool = Field(

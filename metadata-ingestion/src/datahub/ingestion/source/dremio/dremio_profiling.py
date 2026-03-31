@@ -42,9 +42,7 @@ class DremioProfiler:
         self.config = config
         self.report = report
         self.state_handler = state_handler
-        self.QUERY_TIMEOUT = (
-            config.profiling.query_timeout
-        )  # 5 minutes timeout for each query
+        self.QUERY_TIMEOUT = config.profiling.query_timeout
 
     def get_workunits(
         self, dataset: DremioDataset, dataset_urn: str
@@ -71,6 +69,30 @@ class DremioProfiler:
             )
             return
 
+        # Stateful profiling skip: Dremio has no table-level modification timestamps,
+        # so profile_if_updated_since_days is compared against when DataHub last
+        # profiled the table rather than when the table was last modified.
+        if (
+            self.state_handler is not None
+            and self.config.profiling.profile_if_updated_since_days is not None
+        ):
+            last_profiled_ms = self.state_handler.get_last_profiled(dataset_urn)
+            if last_profiled_ms is not None:
+                days_elapsed = (time.time() * 1000 - last_profiled_ms) / (
+                    1000 * 3600 * 24
+                )
+                if days_elapsed < self.config.profiling.profile_if_updated_since_days:
+                    logger.info(
+                        f"Skipping profiling of {full_table_name}: profiled "
+                        f"{days_elapsed:.2f}d ago, threshold is "
+                        f"{self.config.profiling.profile_if_updated_since_days}d"
+                    )
+                    self.report.profiling_skipped_not_updated[full_table_name] += 1
+                    # Carry the existing timestamp forward so the next run also
+                    # has an accurate "last profiled" reference.
+                    self.state_handler.add_to_state(dataset_urn, last_profiled_ms)
+                    return
+
         with PerfTimer() as timer:
             profile_data = self.profile_table(full_table_name, columns)
             profile_aspect = self.populate_profile_aspect(profile_data)
@@ -85,6 +107,9 @@ class DremioProfiler:
                 entityUrn=dataset_urn, aspect=profile_aspect
             )
             yield mcp.as_workunit()
+
+            if self.state_handler:
+                self.state_handler.add_to_state(dataset_urn, round(time.time() * 1000))
 
     def populate_profile_aspect(self, profile_data: Dict) -> DatasetProfileClass:
         field_profiles = [
@@ -177,7 +202,6 @@ class DremioProfiler:
                     logger.warning(
                         f"Error building metrics for column {column_name}: {str(e)}"
                     )
-                    # Skip this column and continue with others
 
         if not metrics:
             raise ValueError("No valid metrics could be generated")
@@ -251,23 +275,16 @@ class DremioProfiler:
         self, results: List[Dict], columns: List[Tuple[str, str]]
     ) -> Dict:
         profile: Dict[str, Any] = {"column_stats": {}}
-        result_dict = results[0] if results else {}  # We expect only one row of results
-
-        # Parse profiling result using Pydantic model for flexible API response handling
+        result_dict = results[0] if results else {}
         profiling_result = DremioProfilingResult.model_validate(result_dict)
-
-        # Use dot notation to access parsed data
         profile["row_count"] = profiling_result.row_count
         profile["column_count"] = profiling_result.column_count
 
         for column_name, data_type in columns:
             safe_column_name = re.sub(r"\W|^(?=\d)", "_", column_name)
-
-            # Get structured column statistics with full dot notation
             col_stats = profiling_result.get_column_stats(safe_column_name)
             column_stats: Dict[str, Any] = {}
 
-            # Use clean dot notation access throughout
             if self.config.profiling.include_field_distinct_count:
                 column_stats["distinct_count"] = (
                     int(col_stats.distinct_count)

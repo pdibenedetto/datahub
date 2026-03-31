@@ -4,21 +4,28 @@
 source:
   type: dremio
   config:
-    # Authentication details
-    authentication_method: PAT # Use Personal Access Token for authentication
-    password: <your_api_token> # Replace <your_api_token> with your Dremio Cloud API token
-    is_dremio_cloud: True # Set to True for Dremio Cloud instances
-    dremio_cloud_project_id: <project_id> # Provide the Project ID for Dremio Cloud
+    authentication_method: PAT
+    password: <your_api_token>
+    is_dremio_cloud: true
+    dremio_cloud_project_id: <project_id>
 
-    # Enable query lineage tracking
-    include_query_lineage: True
+    include_query_lineage: true
 
-    # Optional: Map Dremio sources to external platforms for lineage
+    # Emit lineage and properties as PATCH to preserve manual UI edits.
+    incremental_lineage: true
+    incremental_properties: false
+
+    # Enable checkpointing for stale entity removal and time-window deduplication.
+    stateful_ingestion:
+      enabled: true
+    enable_stateful_time_window: true
+
+    # Optional: map Dremio sources to external platforms for cross-source lineage
     source_mappings:
       - platform: s3
         source_name: samples
 
-    # Optional: Filter datasets using schema patterns
+    # Optional: restrict ingestion to specific schemas or datasets
     schema_pattern:
       allow:
         - "<source_name>.<table_name>"
