@@ -3,7 +3,12 @@
 from typing import TYPE_CHECKING, Callable, List
 
 from datahub_agent_context.mcp_tools import get_me
+from datahub_agent_context.mcp_tools.ask_datahub import (
+    ask_datahub_chat,
+    get_datahub_chat,
+)
 from datahub_agent_context.mcp_tools.assertions import get_dataset_assertions
+from datahub_agent_context.mcp_tools.base import _is_datahub_cloud
 from datahub_agent_context.mcp_tools.documents import grep_documents, search_documents
 from datahub_agent_context.mcp_tools.domains import remove_domains, set_domains
 from datahub_agent_context.mcp_tools.structured_properties import (
@@ -92,6 +97,15 @@ def build_google_adk_tools(
                 create_context_wrapper(add_glossary_terms, client),
                 create_context_wrapper(remove_glossary_terms, client),
                 create_context_wrapper(save_document, client),
+            ]
+        )
+
+    # Cloud-only: Ask DataHub AI chat tools
+    if _is_datahub_cloud(client._graph):
+        tools.extend(
+            [
+                create_context_wrapper(ask_datahub_chat, client),
+                create_context_wrapper(get_datahub_chat, client),
             ]
         )
 
