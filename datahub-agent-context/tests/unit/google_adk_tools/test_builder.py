@@ -36,6 +36,12 @@ MUTATION_TOOLS = {
     "save_document",
 }
 
+# Cloud-only tools (included when the mock client reports as Cloud)
+CLOUD_TOOLS = {
+    "ask_datahub_chat",
+    "get_datahub_chat",
+}
+
 
 @pytest.fixture
 def mock_client():
@@ -63,7 +69,7 @@ def test_build_google_adk_tools_without_mutations(mock_client):
 
     tool_names = {t.__name__ for t in tools}
 
-    assert tool_names == READ_ONLY_TOOLS
+    assert tool_names == READ_ONLY_TOOLS | CLOUD_TOOLS
 
 
 def test_build_google_adk_tools_with_mutations(mock_client):
@@ -72,7 +78,7 @@ def test_build_google_adk_tools_with_mutations(mock_client):
 
     tool_names = {t.__name__ for t in tools}
 
-    assert tool_names == READ_ONLY_TOOLS | MUTATION_TOOLS
+    assert tool_names == READ_ONLY_TOOLS | MUTATION_TOOLS | CLOUD_TOOLS
 
 
 def test_build_google_adk_tools_preserves_function_names(mock_client):
@@ -80,7 +86,7 @@ def test_build_google_adk_tools_preserves_function_names(mock_client):
     tools = build_google_adk_tools(mock_client)
 
     for t in tools:
-        assert t.__name__ in READ_ONLY_TOOLS
+        assert t.__name__ in READ_ONLY_TOOLS | CLOUD_TOOLS
 
 
 def test_build_google_adk_tools_context_managed_automatically(mock_client):
