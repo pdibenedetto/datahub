@@ -237,6 +237,22 @@ class LookerV2Config(
             )
         return self
 
+    @model_validator(mode="after")
+    def validate_looks_require_stateful_ingestion(self) -> "LookerV2Config":
+        """Validate that stateful ingestion is enabled when extracting Looks.
+
+        Without stale entity removal, Looks that are deleted in Looker will
+        remain as stale entities in DataHub indefinitely.
+        """
+        if self.extract_looks and (
+            self.stateful_ingestion is None or not self.stateful_ingestion.enabled
+        ):
+            raise ValueError(
+                "stateful_ingestion.enabled must be set to true when extract_looks is enabled. "
+                "Without stateful ingestion, deleted Looks will accumulate as stale entities in DataHub."
+            )
+        return self
+
     @field_validator("project_dependencies", mode="before")
     @classmethod
     def parse_project_dependencies(

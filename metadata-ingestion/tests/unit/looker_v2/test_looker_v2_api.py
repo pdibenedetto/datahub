@@ -4,11 +4,13 @@ Covers:
 - Bulk folder pre-fetch and ancestor walk
 - View discovery categorization
 - ManifestParser constant extraction
+- Config validation (extract_looks + stateful ingestion)
 """
 
 from typing import Any, Dict, Optional
 from unittest.mock import MagicMock
 
+import pytest
 from looker_sdk.sdk.api40.models import FolderBase
 
 from datahub.ingestion.source.looker_v2.lookml_view_discovery import (
@@ -275,3 +277,59 @@ class TestViewDiscoveryCategorization:
 
         orphan_file = str(tmp_path / "orphan.view.lkml")
         assert orphan_file in result.orphaned_files
+
+
+# ---------------------------------------------------------------------------
+# Config validation
+# ---------------------------------------------------------------------------
+
+
+class TestExtractLooksRequiresStatefulIngestion:
+    """extract_looks=True must be paired with stateful_ingestion.enabled=True."""
+
+    BASE_CONFIG = {
+        "base_url": "https://looker.example.com",
+        "client_id": "id",
+        "client_secret": "secret",
+        "base_folder": "/tmp",
+    }
+
+    def test_extract_looks_without_stateful_raises(self):
+        from pydantic import ValidationError
+
+        from datahub.ingestion.source.looker_v2.looker_v2_config import LookerV2Config
+
+        with pytest.raises(ValidationError, match="stateful_ingestion.enabled"):
+            LookerV2Config(**{**self.BASE_CONFIG, "extract_looks": True})
+
+    def test_extract_looks_with_stateful_disabled_raises(self):
+        from pydantic import ValidationError
+
+        from datahub.ingestion.source.looker_v2.looker_v2_config import LookerV2Config
+
+        with pytest.raises(ValidationError, match="stateful_ingestion.enabled"):
+            LookerV2Config(
+                **{
+                    **self.BASE_CONFIG,
+                    "extract_looks": True,
+                    "stateful_ingestion": {"enabled": False},
+                }
+            )
+
+    def test_extract_looks_with_stateful_enabled_passes(self):
+        from datahub.ingestion.source.looker_v2.looker_v2_config import LookerV2Config
+
+        config = LookerV2Config(
+            **{
+                **self.BASE_CONFIG,
+                "extract_looks": True,
+                "stateful_ingestion": {"enabled": True},
+            }
+        )
+        assert config.extract_looks is True
+
+    def test_extract_looks_false_no_stateful_passes(self):
+        from datahub.ingestion.source.looker_v2.looker_v2_config import LookerV2Config
+
+        config = LookerV2Config(**{**self.BASE_CONFIG, "extract_looks": False})
+        assert config.extract_looks is False
