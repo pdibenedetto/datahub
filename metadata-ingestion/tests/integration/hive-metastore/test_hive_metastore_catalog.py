@@ -32,7 +32,7 @@ import os
 from typing import Dict, Sequence
 
 import pytest
-from freezegun import freeze_time
+import time_machine
 
 from datahub.ingestion.run.pipeline import Pipeline
 from datahub.testing import mce_helpers
@@ -226,7 +226,7 @@ IGNORE_PATHS_V2: Sequence[str] = [
 ]
 
 
-@freeze_time(FROZEN_TIME)
+@time_machine.travel(FROZEN_TIME, tick=False)
 def test_ingest_default_catalog(
     loaded_hms3, test_resources_dir, pytestconfig, tmp_path, mock_time
 ):
@@ -274,7 +274,7 @@ def test_ingest_default_catalog(
     )
 
 
-@freeze_time(FROZEN_TIME)
+@time_machine.travel(FROZEN_TIME, tick=False)
 def test_ingest_spark_catalog(
     loaded_hms3, test_resources_dir, pytestconfig, tmp_path, mock_time
 ):
@@ -323,7 +323,7 @@ def test_ingest_spark_catalog(
     )
 
 
-@freeze_time(FROZEN_TIME)
+@time_machine.travel(FROZEN_TIME, tick=False)
 def test_ingest_spark_catalog_with_catalog_ids(
     loaded_hms3, test_resources_dir, pytestconfig, tmp_path, mock_time
 ):
@@ -377,7 +377,7 @@ def test_ingest_spark_catalog_with_catalog_ids(
 # =============================================================================
 
 
-@freeze_time(FROZEN_TIME)
+@time_machine.travel(FROZEN_TIME, tick=False)
 def test_urn_without_catalog_name(loaded_hms3, tmp_path, mock_time):
     """
     Test that URNs do NOT include catalog name when include_catalog_name_in_ids=False.
@@ -413,7 +413,7 @@ def test_urn_without_catalog_name(loaded_hms3, tmp_path, mock_time):
     assert "spark_catalog.test_db.users" not in content
 
 
-@freeze_time(FROZEN_TIME)
+@time_machine.travel(FROZEN_TIME, tick=False)
 def test_urn_with_catalog_name(loaded_hms3, tmp_path, mock_time):
     """
     Test that URNs DO include catalog name when include_catalog_name_in_ids=True.
