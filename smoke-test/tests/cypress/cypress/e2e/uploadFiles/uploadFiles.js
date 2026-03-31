@@ -123,7 +123,7 @@ describe("uploadFiles", () => {
     clearDescription();
   });
 
-  it.skip("should validate file type", () => {
+  it("should validate file type", () => {
     const testId = getUniqueTestId();
     setupInterceptors(testId);
     const file = createFile("content", "test.unknown", "unknown");
