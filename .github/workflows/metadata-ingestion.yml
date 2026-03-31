@@ -179,9 +179,12 @@ jobs:
           if [ -n "$COMMAND" ]; then
             ./gradlew :metadata-ingestion:"$COMMAND"
           elif [ -n "$TEST_PATH" ]; then
-            source metadata-ingestion/venv/bin/activate
+            # Run from metadata-ingestion/ to match Gradle batch behavior
+            # (conftest.py, relative paths, working directory must match)
+            cd metadata-ingestion
+            source venv/bin/activate
             pytest -m integration \
-              "metadata-ingestion/$TEST_PATH" \
+              "$TEST_PATH" \
               --junit-xml="test-results/junit.${CONNECTOR}.xml"
           fi
       - name: Debug info
