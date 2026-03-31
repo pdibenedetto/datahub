@@ -124,10 +124,10 @@ This catches non-obvious dependencies like `dbt` importing `sql/sql_types.py` â€
 
 ## `connector.yaml` reference
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `test_path` | No | Override the default test directory (default: `tests/integration/{source_dir_name}/`) |
-| `extra_source_paths` | No | Additional source directories covered by this connector's tests |
-| `extra_test_paths` | No | Additional test directories for this connector |
-| `is_shared_base` | No | Mark as a shared base class (like `sql/`) |
-| `test_paths` | Only for shared bases | List of test directories to expand when this base changes |
+| Field                | Required              | Description                                                                           |
+| -------------------- | --------------------- | ------------------------------------------------------------------------------------- |
+| `test_path`          | No                    | Override the default test directory (default: `tests/integration/{source_dir_name}/`) |
+| `extra_source_paths` | No                    | Additional source directories covered by this connector's tests                       |
+| `extra_test_paths`   | No                    | Additional test directories for this connector                                        |
+| `is_shared_base`     | No                    | Mark as a shared base class (like `sql/`)                                             |
+| `test_paths`         | Only for shared bases | List of test directories to expand when this base changes                             |

@@ -27,12 +27,11 @@ env:
   DEPOT_PROJECT_ID: "${{ vars.DEPOT_PROJECT_ID }}"
 
 jobs:
-  # ── Detect which integration tests need to run ─────────────────────────────
+  # ── Detect which tests need to run and build the full CI matrix ────────────
   detect:
     runs-on: ubuntu-latest
     outputs:
-      test-matrix:         ${{ steps.ci.outputs.test_matrix }}
-      run-all-integration: ${{ steps.ci.outputs.run_all_integration }}
+      matrix: ${{ steps.build-matrix.outputs.matrix }}
     steps:
       - uses: acryldata/sane-checkout-action@186e92cc5948a9c3e1cc7a96eaff9f776f3fc8e3 # v7
         with:
@@ -66,8 +65,42 @@ jobs:
             python metadata-ingestion/scripts/selective_ci_checks.py \
               --base-ref "$BASE_REF"
           fi
+      - name: Build CI matrix
+        id: build-matrix
+        env:
+          RUN_ALL: ${{ steps.ci.outputs.run_all_integration }}
+          TEST_MATRIX: ${{ steps.ci.outputs.test_matrix }}
+        run: |
+          # testQuick always runs (both Python versions)
+          BASE='[{"python-version":"3.11","command":"testQuick"},{"python-version":"3.10","command":"testQuick"}]'
 
-  # ── CI: unit tests (testQuick) always run, integration tests are selective ──
+          if [ "$RUN_ALL" = "true" ]; then
+            # Full static batch list
+            INTEGRATION='[
+              {"python-version":"3.11","command":"testIntegrationBatch0"},
+              {"python-version":"3.11","command":"testIntegrationBatch1"},
+              {"python-version":"3.11","command":"testIntegrationBatch2"},
+              {"python-version":"3.11","command":"testIntegrationBatch3"},
+              {"python-version":"3.11","command":"testIntegrationBatch4"},
+              {"python-version":"3.11","command":"testIntegrationBatch5"},
+              {"python-version":"3.11","command":"testIntegrationBatchRecording"}
+            ]'
+          elif [ -n "$TEST_MATRIX" ] && [ "$TEST_MATRIX" != "[]" ]; then
+            # Selective: use connector test paths from selective_ci_checks.py
+            # Add python-version to each entry
+            INTEGRATION=$(echo "$TEST_MATRIX" | jq -c '[.[] | . + {"python-version":"3.11"}]')
+          else
+            # No integration tests needed
+            INTEGRATION='[]'
+          fi
+
+          # Merge base + integration into a single matrix
+          MATRIX=$(jq -n -c --argjson base "$BASE" --argjson integration "$INTEGRATION" \
+            '{"include": ($base + $integration)}')
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+          echo "Matrix: $MATRIX" | head -c 500
+
+  # ── CI: testQuick always + selective integration tests ─────────────────────
   ci:
     needs: detect
     runs-on: ${{ vars.DEPOT_PROJECT_ID != '' && 'depot-ubuntu-latest-2' || 'ubuntu-latest' }}
@@ -77,27 +110,7 @@ jobs:
       # TODO: Enable this once the test is fixed.
       # DATAHUB_LOOKML_GIT_TEST_SSH_KEY: ${{ secrets.DATAHUB_LOOKML_GIT_TEST_SSH_KEY }}
     strategy:
-      matrix:
-        python-version: ["3.11"]
-        command:
-          # testQuick (unit tests + lint) always runs
-          - "testQuick"
-        include:
-          # Version compatibility test
-          - python-version: "3.10"
-            command: "testQuick"
-          # Integration tests: full static batches when run_all_integration=true
-          - ${{ needs.detect.outputs.run-all-integration == 'true' && fromJson('[
-                {"python-version":"3.11","command":"testIntegrationBatch0"},
-                {"python-version":"3.11","command":"testIntegrationBatch1"},
-                {"python-version":"3.11","command":"testIntegrationBatch2"},
-                {"python-version":"3.11","command":"testIntegrationBatch3"},
-                {"python-version":"3.11","command":"testIntegrationBatch4"},
-                {"python-version":"3.11","command":"testIntegrationBatch5"},
-                {"python-version":"3.11","command":"testIntegrationBatchRecording"}
-              ]') || fromJson('[]') }}
-          # Integration tests: selective when run_all_integration=false and test_matrix is non-empty
-          - ${{ needs.detect.outputs.run-all-integration != 'true' && needs.detect.outputs.test-matrix || fromJson('[]') }}
+      matrix: ${{ fromJson(needs.detect.outputs.matrix) }}
       fail-fast: false
     steps:
       - name: Set up JDK 17
@@ -153,7 +166,7 @@ jobs:
           python metadata-ingestion/scripts/selective_ci_checks.py --validate
       - name: Run metadata-ingestion tests
         run: |
-          # matrix.command is set for Gradle batch jobs (testQuick, testIntegrationBatch0, etc.)
+          # matrix.command is set for Gradle batch jobs (testQuick, testIntegrationBatch*)
           # For selective connector tests, test_path and connector come from the dynamic matrix
           MATRIX_JSON='${{ toJSON(matrix) }}'
           COMMAND=$(echo "$MATRIX_JSON" | jq -r '.command // empty')
