@@ -464,6 +464,10 @@ public class DeleteEntityService {
     proposal.setAspectName(aspectName);
     proposal.setAspect(GenericRecordUtils.serializeAspect(newAspect));
 
+    // Attach cascade operation ID for cross-service correlation via Kafka
+    proposal.setSystemMetadata(new SystemMetadata());
+    cascade.attachToSystemMetadata(proposal.getSystemMetadata());
+
     final AuditStamp auditStamp =
         new AuditStamp()
             .setActor(UrnUtils.getUrn(Constants.SYSTEM_ACTOR))
