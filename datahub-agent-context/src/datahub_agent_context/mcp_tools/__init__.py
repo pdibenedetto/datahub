@@ -1,9 +1,10 @@
-"""MCP tools for interacting with DataHub metadata."""
+"""MCP tools for interacting with DataHub metadata.
 
-from datahub_agent_context.mcp_tools.ask_datahub import (
-    ask_datahub_chat,
-    get_datahub_chat,
-)
+Cloud-only tools (ask_datahub_chat, get_datahub_chat) are available via
+a direct import from datahub_agent_context.mcp_tools.ask_datahub, or by
+passing include_cloud=True to the LangChain / Google ADK builders.
+"""
+
 from datahub_agent_context.mcp_tools.assertions import get_dataset_assertions
 from datahub_agent_context.mcp_tools.descriptions import update_description
 from datahub_agent_context.mcp_tools.documents import grep_documents, search_documents
@@ -51,7 +52,4 @@ __all__ = [
     "remove_structured_properties",
     "get_me",
     "save_document",
-    # Cloud-only tools
-    "ask_datahub_chat",
-    "get_datahub_chat",
 ]

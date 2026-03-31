@@ -9,7 +9,6 @@ and are excluded from LangChain/ADK builders on non-Cloud connections.
 """
 
 import logging
-import threading
 from typing import Any, Optional
 
 from datahub_agent_context.context import get_graph
@@ -78,8 +77,8 @@ def _consume_chat_stream(conversation_urn: str, text: str) -> None:
     """POST to the GMS chat endpoint and consume the SSE stream to completion.
 
     The GMS endpoint proxies to the Python integrations service, which runs the
-    AI agent and persists messages as side effects. We just need to keep the
-    connection alive until the stream finishes.
+    AI agent and persists messages as side effects. We keep the connection alive
+    until the stream finishes so we know when processing is done.
     """
     graph = get_graph()
     url = f"{graph._gms_server}{_CHAT_ENDPOINT}"
@@ -98,13 +97,26 @@ def _consume_chat_stream(conversation_urn: str, text: str) -> None:
         pass
 
 
-def _consume_chat_stream_background(conversation_urn: str, text: str) -> None:
-    """Wrapper for background thread execution with error handling."""
-    try:
-        _consume_chat_stream(conversation_urn, text)
-        logger.info(f"Background chat completed for {conversation_urn}")
-    except Exception:
-        logger.exception(f"Background chat failed for {conversation_urn}")
+def _trigger_chat(conversation_urn: str, text: str) -> None:
+    """Fire-and-forget POST to trigger the agent without waiting for completion.
+
+    The GMS controller spawns its own server-side thread for agent processing
+    and message persistence, so we only need to initiate the request — the
+    server continues independently after the connection is closed.
+    """
+    graph = get_graph()
+    url = f"{graph._gms_server}{_CHAT_ENDPOINT}"
+    body = {"conversationUrn": conversation_urn, "text": text}
+
+    response = graph._session.post(
+        url,
+        json=body,
+        stream=True,
+        timeout=30,
+        headers={"Accept": "text/event-stream"},
+    )
+    response.raise_for_status()
+    response.close()
 
 
 def _extract_text_messages(
@@ -220,12 +232,7 @@ def ask_datahub_chat(
         conversation_urn = _create_conversation()
 
     if async_mode:
-        thread = threading.Thread(
-            target=_consume_chat_stream_background,
-            args=(conversation_urn, message),
-            daemon=True,
-        )
-        thread.start()
+        _trigger_chat(conversation_urn, message)
         return {
             "conversation_urn": conversation_urn,
             "status": "processing",
