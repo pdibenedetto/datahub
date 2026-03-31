@@ -23,10 +23,15 @@ import yaml
 # Everything else that triggers the workflow -> run_all_integration=true.
 CONNECTOR_SOURCE_PREFIX = "metadata-ingestion/src/datahub/ingestion/source/"
 
+# Integration test path prefix — changes here trigger that connector's tests
+INTEGRATION_TEST_PREFIX = "metadata-ingestion/tests/integration/"
+
 # Paths under metadata-ingestion/ that are safe to ignore
-# (not source code, so no integration tests needed)
+# (no integration tests needed)
 SAFE_PREFIXES = [
-    "metadata-ingestion/tests/",
+    "metadata-ingestion/tests/unit/",
+    "metadata-ingestion/tests/performance/",
+    "metadata-ingestion/tests/conftest",
     "metadata-ingestion/scripts/",
     "metadata-ingestion/docs/",
 ]
@@ -198,13 +203,14 @@ def classify(changed_files: list[str], repo_root: Path) -> CIDecisions:
     if not changed_files:
         return d
 
-    # Any file outside connector source dirs -> run everything.
-    # The ONLY path we selectively handle is source/{connector}/.
+    # Classify each changed file into: connector source, integration test, safe, or unknown
     for f in changed_files:
         if f.startswith(CONNECTOR_SOURCE_PREFIX):
-            continue
+            continue  # handled below (connector source change)
+        if f.startswith(INTEGRATION_TEST_PREFIX):
+            continue  # handled below (integration test / golden file change)
         if any(f.startswith(p) for p in SAFE_PREFIXES):
-            continue
+            continue  # unit tests, scripts, docs — no integration tests needed
         if f.startswith("metadata-ingestion/") or f.startswith("metadata-models/"):
             d.run_all_integration = True
             return d
@@ -247,6 +253,16 @@ def classify(changed_files: list[str], repo_root: Path) -> CIDecisions:
 
     # Resolve import-derived dependencies and build test matrix
     test_paths: set[str] = set()
+
+    # Integration test / golden file changes → add that test dir directly
+    for f in changed_files:
+        if f.startswith(INTEGRATION_TEST_PREFIX):
+            # Extract: metadata-ingestion/tests/integration/{connector_name}/...
+            rest = f[len(INTEGRATION_TEST_PREFIX) :]
+            if "/" in rest:
+                test_dir_name = rest.split("/")[0]
+                test_paths.add(f"tests/integration/{test_dir_name}/")
+
     for connector in registry:
         source_dir = connector["_source_dir"]
         deps = import_graph.get(source_dir, set())

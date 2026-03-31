@@ -198,18 +198,41 @@ class TestSafeDefaults:
         assert d.test_matrix == []
 
 
-class TestSafePrefixes:
-    """Test and script changes don't trigger integration tests."""
+class TestIntegrationTestChanges:
+    """Integration test / golden file changes trigger that connector's tests."""
 
-    def test_test_file_change(self, repo_root):
+    def test_test_file_triggers_connector(self, repo_root):
         d = classify(
             ["metadata-ingestion/tests/integration/powerbi/test_powerbi.py"], repo_root
         )
+        assert d.run_all_integration is False
+        assert len(d.test_matrix) == 1
+        assert d.test_matrix[0]["connector"] == "powerbi"
+
+    def test_golden_file_triggers_connector(self, repo_root):
+        d = classify(
+            ["metadata-ingestion/tests/integration/kafka/golden_mces.json"], repo_root
+        )
+        assert d.run_all_integration is False
+        assert len(d.test_matrix) == 1
+        assert d.test_matrix[0]["connector"] == "kafka"
+
+
+class TestSafePrefixes:
+    """Unit tests, scripts, docs don't trigger integration tests."""
+
+    def test_unit_test_change(self, repo_root):
+        d = classify(["metadata-ingestion/tests/unit/test_something.py"], repo_root)
         assert d.run_all_integration is False
         assert d.test_matrix == []
 
     def test_script_change(self, repo_root):
         d = classify(["metadata-ingestion/scripts/selective_ci_checks.py"], repo_root)
+        assert d.run_all_integration is False
+        assert d.test_matrix == []
+
+    def test_docs_change(self, repo_root):
+        d = classify(["metadata-ingestion/docs/dev_guides/selective_ci.md"], repo_root)
         assert d.run_all_integration is False
         assert d.test_matrix == []
 
