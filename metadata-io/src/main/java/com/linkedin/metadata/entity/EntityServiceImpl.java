@@ -70,6 +70,7 @@ import com.linkedin.metadata.entity.restoreindices.RestoreIndicesResult;
 import com.linkedin.metadata.entity.retention.BulkApplyRetentionArgs;
 import com.linkedin.metadata.entity.retention.BulkApplyRetentionResult;
 import com.linkedin.metadata.entity.validation.AspectDeletionRequest;
+import com.linkedin.metadata.entity.validation.ValidationApiUtils;
 import com.linkedin.metadata.entity.validation.ValidationException;
 import com.linkedin.metadata.event.EventProducer;
 import com.linkedin.metadata.models.AspectSpec;
@@ -1013,25 +1014,24 @@ public class EntityServiceImpl implements EntityService<ChangeItemImpl> {
             .map(mcl -> MCLItemImpl.builder().build(mcl, opContext.getAspectRetriever()))
             .collect(Collectors.toList());
 
-    Iterable<List<MCPItem>> iterable =
-        () ->
-            Iterators.partition(
-                AspectsBatch.applyPostMCPSideEffects(batch, opContext.getRetrieverContext())
-                    .iterator(),
-                MCP_SIDE_EFFECT_KAFKA_BATCH_SIZE);
-    StreamSupport.stream(iterable.spliterator(), false)
-        .forEach(
-            sideEffects -> {
-              long count =
-                  ingestProposalAsync(
-                          opContext,
-                          AspectsBatchImpl.builder()
-                              .items(sideEffects)
-                              .retrieverContext(opContext.getRetrieverContext())
-                              .build(opContext))
-                      .count();
-              log.info("Generated {} MCP SideEffects for async processing", count);
-            });
+    try (Stream<MCPItem> sideEffectStream =
+        AspectsBatch.applyPostMCPSideEffects(batch, opContext.getRetrieverContext())) {
+      Iterable<List<MCPItem>> iterable =
+          () -> Iterators.partition(sideEffectStream.iterator(), MCP_SIDE_EFFECT_KAFKA_BATCH_SIZE);
+      StreamSupport.stream(iterable.spliterator(), false)
+          .forEach(
+              sideEffects -> {
+                long count =
+                    ingestProposalAsync(
+                            opContext,
+                            AspectsBatchImpl.builder()
+                                .items(sideEffects)
+                                .retrieverContext(opContext.getRetrieverContext())
+                                .build(opContext))
+                        .count();
+                log.debug("Generated {} MCP SideEffects for async processing", count);
+              });
+    }
   }
 
   /**
@@ -1231,7 +1231,7 @@ public class EntityServiceImpl implements EntityService<ChangeItemImpl> {
                           }
 
                           // Database Upsert successfully validated results
-                          log.info(
+                          log.debug(
                               "Ingesting aspects batch to database: {}",
                               AspectsBatch.toAbbreviatedString(changeMCPs, 2048));
 
@@ -1567,7 +1567,11 @@ public class EntityServiceImpl implements EntityService<ChangeItemImpl> {
             log.error(
                 "Failed to produce MCLs: {}",
                 failedMCLs.stream()
-                    .map(result -> result.getMetadataChangeLog().getEntityUrn())
+                    .map(
+                        result -> {
+                          MetadataChangeLog mcl = result.getMetadataChangeLog();
+                          return mcl.getEntityUrn() + "/" + mcl.getAspectName();
+                        })
                     .collect(Collectors.toList()));
             // TODO restoreIndices?
             throw new RuntimeException("Failed to produce MCLs");
@@ -2488,7 +2492,7 @@ public class EntityServiceImpl implements EntityService<ChangeItemImpl> {
           .emitted(emissionStatus.getFirst() != null)
           .build();
     } else {
-      log.info(
+      log.debug(
           "Skipped producing MCL for ingested aspect {}, urn {}. Aspect has not changed.",
           aspectSpec.getName(),
           entityUrn);
@@ -2511,7 +2515,7 @@ public class EntityServiceImpl implements EntityService<ChangeItemImpl> {
                 mcl.getAspect().getValue(), mcl.getAspect().getContentType(), aspectSpec)
             : null;
     return SystemMetadataUtils.isNoOp(mcl.getSystemMetadata())
-        || Objects.equals(newAspect, oldAspect);
+        || ValidationApiUtils.normalizedEqual(oldAspect, newAspect);
   }
 
   public void produceFailedMCPs(
@@ -2637,7 +2641,7 @@ public class EntityServiceImpl implements EntityService<ChangeItemImpl> {
     final List<Pair<String, RecordTemplate>> aspectRecordsToIngest =
         NewModelUtils.getAspectsFromSnapshot(snapshotRecord);
 
-    log.info("Ingesting entity urn {} with system metadata {}", urn, systemMetadata.toString());
+    log.debug("Ingesting entity urn {} with system metadata {}", urn, systemMetadata.toString());
 
     AspectsBatchImpl aspectsBatch =
         AspectsBatchImpl.builder()
@@ -3246,9 +3250,38 @@ public class EntityServiceImpl implements EntityService<ChangeItemImpl> {
             aspectDao.getValidationConfig(),
             opContext);
 
+    // Resolve maxVersionsToKeep from retention policy (per aspect): <= 1 means do not write a new
+    // history row (version != 0); we still update the existing version 0 row. When retention
+    // service is not enabled, we retain only the current version (1).
+    int maxVersionsToKeep;
+    if (retentionService != null) {
+      try {
+        maxVersionsToKeep =
+            retentionService.getMaxVersionsToKeepForWrite(
+                opContext, writeItem.getUrn().getEntityType(), writeItem.getAspectName());
+      } catch (Exception e) {
+        log.warn(
+            "Failed to resolve retention for urn={} aspect={}, retaining only current version",
+            writeItem.getUrn(),
+            writeItem.getAspectName(),
+            e);
+        maxVersionsToKeep = 1;
+      }
+    } else {
+      maxVersionsToKeep = 1;
+    }
+    if (maxVersionsToKeep <= 1) {
+      log.debug(
+          "No version history for urn={} aspect={} (maxVersions={})",
+          writeItem.getUrn(),
+          writeItem.getAspectName(),
+          maxVersionsToKeep);
+    }
+
     // save to database
     Pair<Optional<EntityAspect>, Optional<EntityAspect>> result =
-        aspectDao.saveLatestAspect(opContext, txContext, latestAspect, upsertAspect);
+        aspectDao.saveLatestAspect(
+            opContext, txContext, latestAspect, upsertAspect, maxVersionsToKeep);
     Optional<EntityAspect> versionN = result.getFirst();
     Optional<EntityAspect> version0 = result.getSecond();
 

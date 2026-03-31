@@ -189,7 +189,7 @@ class DremioSource(StatefulIngestionSourceBase):
     Source that extracts metadata from Dremio via REST API and SQL queries.
 
     Implementation notes:
-    - Uses Dremio\'s REST API v3 for catalog metadata
+    - Uses Dremio's REST API v3 for catalog metadata
     - Supports both Dremio Cloud (project-based) and on-premise instances
     - Uses SQLAlchemy for optional profiling queries
     - Parses SQL job history for query-based lineage when enabled
