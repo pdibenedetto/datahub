@@ -1,0 +1,2 @@
+# Exception: test dir name doesn't match source dir (redshift-usage vs redshift).
+test_path: tests/integration/redshift-usage/

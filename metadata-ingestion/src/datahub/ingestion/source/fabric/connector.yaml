@@ -1,0 +1,4 @@
+# Exception: test dir name doesn't match + extra test path.
+test_path: tests/integration/fabric_data_factory/
+extra_test_paths:
+  - tests/integration/fabric_onelake/

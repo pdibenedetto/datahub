@@ -27,7 +27,49 @@ env:
   DEPOT_PROJECT_ID: "${{ vars.DEPOT_PROJECT_ID }}"
 
 jobs:
+  # ── Detect which integration tests need to run ─────────────────────────────
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      test-matrix:         ${{ steps.ci.outputs.test_matrix }}
+      run-all-integration: ${{ steps.ci.outputs.run_all_integration }}
+    steps:
+      - uses: acryldata/sane-checkout-action@186e92cc5948a9c3e1cc7a96eaff9f776f3fc8e3 # v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.11"
+      - name: Install PyYAML
+        run: pip install pyyaml
+      - name: Check for force-all label
+        id: label-check
+        env:
+          LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
+        run: |
+          if echo "$LABELS" | jq -e 'any(. == "run-all-tests")' > /dev/null 2>&1; then
+            echo "force_all=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "force_all=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Compute CI decisions
+        id: ci
+        env:
+          BASE_REF: ${{ github.base_ref || 'master' }}
+          EVENT_NAME: ${{ github.event_name }}
+          FORCE_ALL: ${{ steps.label-check.outputs.force_all }}
+        run: |
+          # Force full suite for: push to master, releases, manual dispatch, or label override
+          if [ "$EVENT_NAME" != "pull_request" ] || [ "$FORCE_ALL" = "true" ]; then
+            python metadata-ingestion/scripts/selective_ci_checks.py --force-all
+          else
+            python metadata-ingestion/scripts/selective_ci_checks.py \
+              --base-ref "$BASE_REF"
+          fi
+
+  # ── CI: unit tests (testQuick) always run, integration tests are selective ──
   ci:
+    needs: detect
     runs-on: ${{ vars.DEPOT_PROJECT_ID != '' && 'depot-ubuntu-latest-2' || 'ubuntu-latest' }}
     timeout-minutes: 80
     env:
@@ -37,20 +79,25 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.11"]
-        command: [
-            "testQuick", # also runs lint
-            "testIntegrationBatch0",
-            "testIntegrationBatch1",
-            "testIntegrationBatch2",
-            "testIntegrationBatch3",
-            "testIntegrationBatch4",
-            "testIntegrationBatch5",
-            "testIntegrationBatchRecording", # Recording tests - isolated execution to avoid module patching interference
-          ]
+        command:
+          # testQuick (unit tests + lint) always runs
+          - "testQuick"
         include:
-          # Version compatibility tests.
+          # Version compatibility test
           - python-version: "3.10"
             command: "testQuick"
+          # Integration tests: full static batches when run_all_integration=true
+          - ${{ needs.detect.outputs.run-all-integration == 'true' && fromJson('[
+                {"python-version":"3.11","command":"testIntegrationBatch0"},
+                {"python-version":"3.11","command":"testIntegrationBatch1"},
+                {"python-version":"3.11","command":"testIntegrationBatch2"},
+                {"python-version":"3.11","command":"testIntegrationBatch3"},
+                {"python-version":"3.11","command":"testIntegrationBatch4"},
+                {"python-version":"3.11","command":"testIntegrationBatch5"},
+                {"python-version":"3.11","command":"testIntegrationBatchRecording"}
+              ]') || fromJson('[]') }}
+          # Integration tests: selective when run_all_integration=false and test_matrix is non-empty
+          - ${{ needs.detect.outputs.run-all-integration != 'true' && needs.detect.outputs.test-matrix || fromJson('[]') }}
       fail-fast: false
     steps:
       - name: Set up JDK 17
@@ -99,8 +146,28 @@ jobs:
               exit 1
             fi
           done
+      - name: Validate selective CI connector mappings
+        if: ${{ matrix.command == 'testQuick' }}
+        run: |
+          source metadata-ingestion/venv/bin/activate
+          python metadata-ingestion/scripts/selective_ci_checks.py --validate
       - name: Run metadata-ingestion tests
-        run: ./gradlew :metadata-ingestion:${{ matrix.command }}
+        run: |
+          # matrix.command is set for Gradle batch jobs (testQuick, testIntegrationBatch0, etc.)
+          # For selective connector tests, test_path and connector come from the dynamic matrix
+          MATRIX_JSON='${{ toJSON(matrix) }}'
+          COMMAND=$(echo "$MATRIX_JSON" | jq -r '.command // empty')
+          TEST_PATH=$(echo "$MATRIX_JSON" | jq -r '.test_path // empty')
+          CONNECTOR=$(echo "$MATRIX_JSON" | jq -r '.connector // empty')
+
+          if [ -n "$COMMAND" ]; then
+            ./gradlew :metadata-ingestion:"$COMMAND"
+          elif [ -n "$TEST_PATH" ]; then
+            source metadata-ingestion/venv/bin/activate
+            pytest -m integration \
+              "metadata-ingestion/$TEST_PATH" \
+              --junit-xml="test-results/junit.${CONNECTOR}.xml"
+          fi
       - name: Debug info
         if: always()
         run: |
@@ -134,6 +201,27 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           override_branch: ${{ github.head_ref || github.ref_name }}
 
+  # ── Single required branch protection check ────────────────────────────────
+  integration-tests-gate:
+    needs: [detect, ci]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check all required tests passed
+        run: |
+          # detect must succeed — if it crashes, we have no signal
+          if [ "${{ needs.detect.result }}" != "success" ]; then
+            echo "::error::detect job failed — cannot trust test results"
+            exit 1
+          fi
+          if [ "${{ needs.ci.result }}" = "success" ] || \
+             [ "${{ needs.ci.result }}" = "skipped" ]; then
+            echo "All integration tests passed or skipped"
+          else
+            echo "CI failed"
+            exit 1
+          fi
+
   event-file:
     runs-on: ubuntu-latest
     steps:
@@ -152,14 +240,17 @@ jobs:
       - uses: acryldata/sane-checkout-action@186e92cc5948a9c3e1cc7a96eaff9f776f3fc8e3 # v7
       - name: Check if Python files were modified
         id: check-changes
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
         run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+          if [ "$EVENT_NAME" == "workflow_dispatch" ]; then
             echo "should_run=true" >> "$GITHUB_OUTPUT"
             echo "Running due to manual workflow dispatch"
-          elif [ "${{ github.event_name }}" == "pull_request" ]; then
+          elif [ "$EVENT_NAME" == "pull_request" ]; then
             # Check if any Python file in metadata-ingestion is in the changed files
-            git fetch origin "${{ github.base_ref }}"
-            if git diff --name-only "origin/${{ github.base_ref }}...HEAD" | grep -q '^metadata-ingestion/.*\.py$'; then
+            git fetch origin "$BASE_REF"
+            if git diff --name-only "origin/$BASE_REF...HEAD" | grep -q '^metadata-ingestion/.*\.py$'; then
               echo "should_run=true" >> "$GITHUB_OUTPUT"
               echo "Python files were modified in metadata-ingestion, running plugin validation"
             else
@@ -218,10 +309,10 @@ jobs:
           for plugin in $(echo "$PLUGINS" | jq -r '.[]'); do
             echo "::group::Validating plugin: $plugin"
             PLUGIN_VENV="venv-${plugin}"
-            
+
             # Create a fresh venv for this plugin
             uv venv "$PLUGIN_VENV"
-            
+
             # Install the plugin in its venv using system uv command
             if ! uv pip install -e ".[${plugin}]" --python "$PLUGIN_VENV/bin/python"; then
               echo "❌ Plugin '$plugin' failed to install"
@@ -236,7 +327,7 @@ jobs:
               echo "✅ Plugin '$plugin' installed and importable"
               SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
             fi
-            
+
             # Clean up venv to save space
             rm -rf "$PLUGIN_VENV"
             echo "::endgroup::"
