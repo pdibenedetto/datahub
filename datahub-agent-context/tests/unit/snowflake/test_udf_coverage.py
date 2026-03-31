@@ -23,14 +23,6 @@ _TOOLS_WITHOUT_UDFS: dict[str, str] = {
         "Requires multi-step document hierarchy setup and user-context that "
         "doesn't map cleanly to a single stateless Snowflake UDF."
     ),
-    "ask_datahub_chat": (
-        "Cloud-only tool that calls the DataHub AI chat endpoint. "
-        "Not available in Snowflake UDF context."
-    ),
-    "get_datahub_chat": (
-        "Cloud-only tool that reads AI chat conversations. "
-        "Not available in Snowflake UDF context."
-    ),
 }
 
 # Map mcp_tools function name → expected UDF name (uppercase by convention).

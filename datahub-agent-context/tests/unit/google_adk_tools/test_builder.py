@@ -36,7 +36,6 @@ MUTATION_TOOLS = {
     "save_document",
 }
 
-# Cloud-only tools (included when the mock client reports as Cloud)
 CLOUD_TOOLS = {
     "ask_datahub_chat",
     "get_datahub_chat",
@@ -64,17 +63,37 @@ def test_build_google_adk_tools_returns_list_of_callables(mock_client):
 
 
 def test_build_google_adk_tools_without_mutations(mock_client):
-    """Test that build_google_adk_tools excludes mutations by default."""
+    """Test that build_google_adk_tools excludes mutations and cloud tools by default."""
     tools = build_google_adk_tools(mock_client, include_mutations=False)
+
+    tool_names = {t.__name__ for t in tools}
+
+    assert tool_names == READ_ONLY_TOOLS
+
+
+def test_build_google_adk_tools_with_mutations(mock_client):
+    """Test that build_google_adk_tools includes mutations when requested."""
+    tools = build_google_adk_tools(mock_client, include_mutations=True)
+
+    tool_names = {t.__name__ for t in tools}
+
+    assert tool_names == READ_ONLY_TOOLS | MUTATION_TOOLS
+
+
+def test_build_google_adk_tools_with_cloud(mock_client):
+    """Test that build_google_adk_tools includes cloud tools when requested."""
+    tools = build_google_adk_tools(mock_client, include_cloud=True)
 
     tool_names = {t.__name__ for t in tools}
 
     assert tool_names == READ_ONLY_TOOLS | CLOUD_TOOLS
 
 
-def test_build_google_adk_tools_with_mutations(mock_client):
-    """Test that build_google_adk_tools includes mutations when requested."""
-    tools = build_google_adk_tools(mock_client, include_mutations=True)
+def test_build_google_adk_tools_with_mutations_and_cloud(mock_client):
+    """Test that both mutations and cloud tools can be included together."""
+    tools = build_google_adk_tools(
+        mock_client, include_mutations=True, include_cloud=True
+    )
 
     tool_names = {t.__name__ for t in tools}
 
@@ -86,7 +105,7 @@ def test_build_google_adk_tools_preserves_function_names(mock_client):
     tools = build_google_adk_tools(mock_client)
 
     for t in tools:
-        assert t.__name__ in READ_ONLY_TOOLS | CLOUD_TOOLS
+        assert t.__name__ in READ_ONLY_TOOLS
 
 
 def test_build_google_adk_tools_context_managed_automatically(mock_client):

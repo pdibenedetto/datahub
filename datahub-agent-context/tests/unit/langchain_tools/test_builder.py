@@ -125,6 +125,29 @@ def test_build_langchain_tools_with_mutations(mock_client):
     assert "remove_tags" in tool_names
 
 
+def test_build_langchain_tools_excludes_cloud_by_default(mock_client):
+    """Test that cloud tools are not included unless explicitly requested."""
+    tools = build_langchain_tools(mock_client)
+
+    tool_names = {tool.name for tool in tools}
+
+    assert "ask_datahub_chat" not in tool_names
+    assert "get_datahub_chat" not in tool_names
+
+
+def test_build_langchain_tools_with_cloud(mock_client):
+    """Test that cloud tools are included when include_cloud=True."""
+    tools = build_langchain_tools(mock_client, include_cloud=True)
+
+    tool_names = {tool.name for tool in tools}
+
+    assert "ask_datahub_chat" in tool_names
+    assert "get_datahub_chat" in tool_names
+    # Base tools should still be there
+    assert "search" in tool_names
+    assert "get_entities" in tool_names
+
+
 def test_wrapped_tools_manage_context_automatically(mock_client):
     """Test that tools manage context automatically when called."""
     # Setup mock to return search results

@@ -259,13 +259,13 @@ def test_ask_chat_sync_error(
 # ---------------------------------------------------------------------------
 
 
-@patch("datahub_agent_context.mcp_tools.ask_datahub.threading.Thread")
+@patch("datahub_agent_context.mcp_tools.ask_datahub._trigger_chat")
 @patch("datahub_agent_context.mcp_tools.ask_datahub._create_conversation")
 @patch("datahub_agent_context.mcp_tools.ask_datahub.get_graph")
 def test_ask_chat_async(
     mock_get_graph: MagicMock,
     mock_create: MagicMock,
-    mock_thread_cls: MagicMock,
+    mock_trigger: MagicMock,
     cloud_graph: MagicMock,
 ) -> None:
     mock_get_graph.return_value = cloud_graph
@@ -275,14 +275,16 @@ def test_ask_chat_async(
 
     assert result["status"] == "processing"
     assert result["conversation_urn"] == "urn:li:dataHubAiConversation:async1"
-    mock_thread_cls.return_value.start.assert_called_once()
+    mock_trigger.assert_called_once_with(
+        "urn:li:dataHubAiConversation:async1", "What datasets?"
+    )
 
 
-@patch("datahub_agent_context.mcp_tools.ask_datahub.threading.Thread")
+@patch("datahub_agent_context.mcp_tools.ask_datahub._trigger_chat")
 @patch("datahub_agent_context.mcp_tools.ask_datahub.get_graph")
 def test_ask_chat_async_existing_conversation(
     mock_get_graph: MagicMock,
-    mock_thread_cls: MagicMock,
+    mock_trigger: MagicMock,
     cloud_graph: MagicMock,
 ) -> None:
     mock_get_graph.return_value = cloud_graph
@@ -293,7 +295,7 @@ def test_ask_chat_async_existing_conversation(
     )
 
     assert result["conversation_urn"] == existing
-    mock_thread_cls.return_value.start.assert_called_once()
+    mock_trigger.assert_called_once_with(existing, "Follow up")
 
 
 # ---------------------------------------------------------------------------

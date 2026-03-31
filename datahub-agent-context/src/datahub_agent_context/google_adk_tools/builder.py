@@ -3,12 +3,7 @@
 from typing import TYPE_CHECKING, Callable, List
 
 from datahub_agent_context.mcp_tools import get_me
-from datahub_agent_context.mcp_tools.ask_datahub import (
-    ask_datahub_chat,
-    get_datahub_chat,
-)
 from datahub_agent_context.mcp_tools.assertions import get_dataset_assertions
-from datahub_agent_context.mcp_tools.base import _is_datahub_cloud
 from datahub_agent_context.mcp_tools.documents import grep_documents, search_documents
 from datahub_agent_context.mcp_tools.domains import remove_domains, set_domains
 from datahub_agent_context.mcp_tools.structured_properties import (
@@ -40,6 +35,7 @@ from datahub_agent_context.mcp_tools.terms import (
 def build_google_adk_tools(
     client: "DataHubClient",
     include_mutations: bool = False,
+    include_cloud: bool = False,
 ) -> List[Callable]:
     """Build Google ADK tools with automatic context management.
 
@@ -50,6 +46,9 @@ def build_google_adk_tools(
     Args:
         client: DataHubClient instance
         include_mutations: Whether to include mutation tools (default: False)
+        include_cloud: Whether to include DataHub Cloud-only tools such as
+            ask_datahub_chat and get_datahub_chat (default: False).
+            Requires a DataHub Cloud instance.
 
     Returns:
         List of callables ready for use as Google ADK tools
@@ -100,8 +99,12 @@ def build_google_adk_tools(
             ]
         )
 
-    # Cloud-only: Ask DataHub AI chat tools
-    if _is_datahub_cloud(client._graph):
+    if include_cloud:
+        from datahub_agent_context.mcp_tools.ask_datahub import (
+            ask_datahub_chat,
+            get_datahub_chat,
+        )
+
         tools.extend(
             [
                 create_context_wrapper(ask_datahub_chat, client),
