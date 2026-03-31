@@ -9,6 +9,7 @@ The `scripts/selective_ci_checks.py` script analyzes the list of changed files i
 1. **If any file outside `source/{connector}/` changed** (e.g. `api/`, `emitter/`, `setup.py`, `metadata-models/`), it runs the full test suite — these are core changes that could affect any connector.
 
 2. **If only connector source files changed**, it builds a targeted test matrix:
+
    - Each changed connector's integration tests are included.
    - If a connector imports from another connector (e.g. `bigquery_v2` imports from `sql/`), changing `sql/` also triggers `bigquery_v2` tests. Dependencies are resolved automatically by parsing Python imports with `ast`.
 
