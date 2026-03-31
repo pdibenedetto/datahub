@@ -134,6 +134,9 @@ jobs:
         run: ./metadata-ingestion/scripts/install_deps.sh
       - name: Install ODBC driver for mssql tests
         run: ./metadata-ingestion/scripts/install_odbc_for_mssql_tests.sh
+      - name: Install dev environment for selective tests
+        if: ${{ !matrix.command }}
+        run: ./gradlew :metadata-ingestion:installDev
       - name: Install package
         if: ${{ matrix.command == 'testQuick' }}
         run: ./gradlew :metadata-ingestion:installPackageOnly
