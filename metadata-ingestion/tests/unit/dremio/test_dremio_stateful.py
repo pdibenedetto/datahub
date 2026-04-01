@@ -23,6 +23,7 @@ from datahub.ingestion.source.dremio.dremio_entities import DremioCatalog
 from datahub.metadata.schema_classes import (
     ChangeTypeClass,
     DatasetPropertiesClass,
+    MetadataChangeProposalClass,
 )
 
 # ---------------------------------------------------------------------------
@@ -51,7 +52,8 @@ class TestAutoIncrementalProperties:
 
         assert len(output) == 1
         output_mcp = output[0].metadata
-        assert isinstance(output_mcp, MetadataChangeProposalWrapper)
+        # convert_dataset_properties_to_patch uses mcp_raw, so metadata is MetadataChangeProposalClass
+        assert isinstance(output_mcp, MetadataChangeProposalClass)
         assert output_mcp.changeType == ChangeTypeClass.PATCH
 
 
