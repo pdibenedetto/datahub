@@ -39,7 +39,7 @@ SAFE_PREFIXES = [
     "metadata-ingestion/docs/",
 ]
 
-SOURCE_EXTENSIONS = (".py", ".yaml", ".yml")
+IGNORED_SOURCE_EXTENSIONS = (".md",)
 
 # Prefix for all metadata-ingestion-relative paths in repo-root form
 MI_PREFIX = "metadata-ingestion/"
@@ -480,13 +480,13 @@ def classify(changed_files: list[str], repo_root: Path) -> CIDecisions:
     )
 
     # Find which connector source directories were directly changed.
-    # .py files affect runtime behavior, .yaml files affect CI routing —
-    # both should trigger tests. Other files (.json, .md, etc.) are ignored.
+    # Any file in a connector source dir should trigger tests, except
+    # documentation files (.md) which don't affect runtime behavior.
     source_files = [
         f
         for f in changed_files
         if f.startswith(CONNECTOR_SOURCE_PREFIX)
-        and any(f.endswith(ext) for ext in SOURCE_EXTENSIONS)
+        and not any(f.endswith(ext) for ext in IGNORED_SOURCE_EXTENSIONS)
     ]
 
     changed_source_dirs, known_source_prefixes = _match_source_files(
@@ -578,16 +578,7 @@ def validate(repo_root: Path) -> list[str]:
             if tp and not (mi / tp).exists():
                 errors.append(f"{c.source_dir}: test path '{tp}' does not exist")
 
-    # 2. (Removed) Previously required every registered connector to have a test_path.
-    # Now that all source dirs are auto-registered, many utility dirs have no direct
-    # tests — this is intentional. The safety net in classify() falls back to
-    # run_all_integration when a changed source dir produces no test paths.
-
-    # 3. (Removed) Previously validated is_shared_base connectors — all shared base
-    #    connector.yaml files with is_shared_base have been deleted; EP-derived test
-    #    mapping now covers those cases automatically.
-
-    # 4. Warn about test dirs not covered by any connector
+    # 2. Warn about test dirs not covered by any connector
     # A test dir is covered if: listed in registry test_path/extra_test_paths/test_paths,
     # or matches a source dir by convention, or is in entry-point-derived mapping.
     ep_covered_tests: set[str] = set()

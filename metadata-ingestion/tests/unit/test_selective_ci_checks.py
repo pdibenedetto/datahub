@@ -856,8 +856,8 @@ class TestSafePrefixConftest:
         assert d.test_matrix == []
 
 
-class TestYamlSourceExtension:
-    """YAML files inside connector source dirs trigger tests like .py files."""
+class TestSourceFileExtensions:
+    """Any file in a connector source dir triggers tests, except .md."""
 
     def test_yaml_change_triggers_connector(self, repo_root):
         d = classify(
@@ -868,12 +868,30 @@ class TestYamlSourceExtension:
         assert len(d.test_matrix) == 1
         assert d.test_matrix[0]["connector"] == "powerbi"
 
-    def test_json_file_ignored(self, repo_root):
+    def test_json_change_triggers_connector(self, repo_root):
         d = classify(
-            ["metadata-ingestion/src/datahub/ingestion/source/powerbi/data.json"],
+            ["metadata-ingestion/src/datahub/ingestion/source/powerbi/schema.json"],
             repo_root,
         )
-        # .json not in SOURCE_EXTENSIONS — no source files matched, nothing to do
+        assert d.run_all_integration is False
+        assert len(d.test_matrix) == 1
+        assert d.test_matrix[0]["connector"] == "powerbi"
+
+    def test_unknown_extension_triggers_connector(self, repo_root):
+        d = classify(
+            ["metadata-ingestion/src/datahub/ingestion/source/powerbi/data.parquet"],
+            repo_root,
+        )
+        assert d.run_all_integration is False
+        assert len(d.test_matrix) == 1
+        assert d.test_matrix[0]["connector"] == "powerbi"
+
+    def test_markdown_file_ignored(self, repo_root):
+        d = classify(
+            ["metadata-ingestion/src/datahub/ingestion/source/powerbi/README.md"],
+            repo_root,
+        )
+        # .md is in IGNORED_SOURCE_EXTENSIONS — documentation only
         assert d.run_all_integration is False
         assert d.test_matrix == []
 
