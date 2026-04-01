@@ -376,6 +376,8 @@ public final class QueryShapeAnalyzer {
       // Show structure of first array element to understand what's inside
       if (!arr.getValues().isEmpty()) {
         appendArgumentStructure(sb, arr.getValues().get(0), depth + 1);
+      } else {
+        sb.append("{}"); // Empty array has empty structure
       }
 
     } else {
