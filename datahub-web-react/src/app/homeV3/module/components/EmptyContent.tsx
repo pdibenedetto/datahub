@@ -1,4 +1,4 @@
-import { Button, Icon, Text, borders, colors, radius } from '@components';
+import { Button, Icon, Text, borders, radius } from '@components';
 import { ArrowRight } from '@phosphor-icons/react/dist/csr/ArrowRight';
 import React from 'react';
 import styled from 'styled-components';
@@ -33,7 +33,7 @@ const IconWrapper = styled.div`
     width: 32px;
     height: 32px;
 
-    border: ${borders['1px']} ${colors.gray[100]};
+    border: ${borders['1px']} ${(props) => props.theme.colors.border};
     border-radius: ${radius.full};
     margin-bottom: 8px;
 `;
@@ -42,12 +42,12 @@ export default function EmptyContent({ icon, title, description, linkText, linkI
     return (
         <Container>
             <IconWrapper>
-                <Icon icon={icon} color="gray" />
+                <Icon icon={icon} />
             </IconWrapper>
-            <Text size="lg" weight="bold" color="gray" colorLevel={600}>
+            <Text size="lg" weight="bold">
                 {title}
             </Text>
-            <Text color="gray">{description}</Text>
+            <Text>{description}</Text>
             {linkText && onLinkClick && (
                 <Button variant="text" onClick={onLinkClick}>
                     {linkText} <Icon icon={linkIcon ?? ArrowRight} color="primary" size="md" />
