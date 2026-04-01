@@ -13,7 +13,9 @@ The `scripts/selective_ci_checks.py` script analyzes the list of changed files i
    - Each changed connector's integration tests are included.
    - If a connector imports from another connector (e.g. `bigquery_v2` imports from `sql/`), changing `sql/` also triggers `bigquery_v2` tests. Dependencies are resolved automatically by parsing Python imports with `ast`.
 
-3. **Test-only or script-only changes** skip integration tests entirely (the source hasn't changed, so results would be identical).
+3. **Integration test or golden file changes** trigger that specific connector's tests (e.g. editing `tests/integration/powerbi/golden.json` runs PowerBI tests). Files directly in `tests/integration/` (not in a subdirectory) trigger the full suite since they are shared test infrastructure.
+
+4. **Script-only, doc-only, or unit-test-only changes** skip integration tests entirely.
 
 ## Connector discovery
 
@@ -119,6 +121,8 @@ This catches non-obvious dependencies like `dbt` importing `sql/sql_types.py` �
 
 - **Unknown files** under `source/` that don't belong to any known connector trigger the full suite.
 - **Non-connector files** (api/, emitter/, setup.py, metadata-models/) always trigger the full suite.
+- **Shared test infrastructure** (files directly in `tests/integration/`, e.g. `conftest.py`) triggers the full suite.
+- **Documentation files** (`.md`) inside connector source directories are ignored — they don't affect runtime behavior. All other file types trigger tests.
 - The `run-all-tests` label on a PR forces the full suite regardless of changes.
 - If the detection script crashes, the gate job fails the PR — it never silently passes.
 - **Safety net**: if changed source directories produce no test matrix entries (e.g. a source dir with no test path and no entry-point coverage), the full suite runs with a warning — changed code is never silently untested.
