@@ -1271,7 +1271,7 @@ graphQL:
     # Estimate: responseFieldCount * 50 bytes
     # Default: 1048576 (1 MiB), Example overrides: 262144 (256 KiB), 524288 (512 KiB)
     # Override: GRAPHQL_SHAPE_LOGGING_RESPONSE_SIZE_THRESHOLD_BYTES=262144
-    responseSizeThresholdBytes: ${GRAPHQL_SHAPE_LOGGING_RESPONSE_SIZE_THRESHOLD_BYTES:1_048_576}
+    responseSizeThresholdBytes: ${GRAPHQL_SHAPE_LOGGING_RESPONSE_SIZE_THRESHOLD_BYTES:1048576}
 
     # Minimum number of GraphQL errors to trigger logging (set to 1 to log any error)
     # Override: GRAPHQL_SHAPE_LOGGING_ERROR_COUNT_THRESHOLD=2
