@@ -59,7 +59,7 @@ def confluent_cloud_mock_runner(
 
 @pytest.fixture(scope="module")
 def test_resources_dir(pytestconfig):
-    return pytestconfig.rootpath / "tests/integration/kafka-connect-confluent-cloud"
+    return pytestconfig.rootpath / "tests/integration/kafka_connect/confluent-cloud"
 
 
 @time_machine.travel(FROZEN_TIME_DT, tick=False)
