@@ -130,7 +130,10 @@ public class GraphQLEngine {
                     QueryContext.class,
                     context,
                     "actor",
-                    context.getActor())) // need this to log actor in logging/instrumentation layer.
+                    context != null && context.getActor() != null
+                        ? context.getActor()
+                        : "no_actor_present")) // need this to log actor in logging/instrumentation
+            // layer.
             // QueryContext and SpringQueryContext exist in packages which
             // cause circular deps added to the instrumentation package.
             .build();

@@ -25,18 +25,6 @@ import lombok.Value;
  */
 public final class ResponseShapeAnalyzer {
 
-  /** Maximum recursion depth when walking the response tree. */
-  private static final int MAX_DEPTH = 10;
-
-  /** Maximum length of the normalized shape string before it is truncated. */
-  private static final int MAX_SHAPE_LENGTH = 2048;
-
-  /** Maximum number of heavy fields to track in priority queue. */
-  private static final int TOP_HEAVY_FIELDS_LIMIT = 10;
-
-  /** Number of array elements to sample for shape analysis. */
-  private static final int SAMPLE_SIZE = 15;
-
   /** Path separator for nested field tracking. */
   private static final String PATH_SEPARATOR = ".";
 
@@ -94,9 +82,10 @@ public final class ResponseShapeAnalyzer {
       // Capacity: TOP_HEAVY_FIELDS_LIMIT + 1 to force eviction of smallest when full
       PriorityQueue<HeavyField> heavyFieldsQueue =
           new PriorityQueue<>(
-              TOP_HEAVY_FIELDS_LIMIT + 1, (a, b) -> Integer.compare(a.size(), b.size()));
+              GraphQLShapeConstants.TOP_HEAVY_FIELDS_LIMIT + 1,
+              (a, b) -> Integer.compare(a.size(), b.size()));
 
-      StringBuilder sb = new StringBuilder();
+      StringBuilder sb = new StringBuilder(GraphQLShapeConstants.INITIAL_SHAPE_BUILDER_CAPACITY);
       appendValue(sb, data, 0, counts, "", heavyFieldsQueue);
 
       // Extract top N: pop from min-heap (ascending), then reverse for descending order
@@ -104,8 +93,8 @@ public final class ResponseShapeAnalyzer {
       Collections.reverse(heavyFields);
 
       String shape = sb.toString();
-      if (shape.length() > MAX_SHAPE_LENGTH) {
-        shape = shape.substring(0, MAX_SHAPE_LENGTH) + "...";
+      if (shape.length() > GraphQLShapeConstants.MAX_RESPONSE_SHAPE_LENGTH) {
+        shape = shape.substring(0, GraphQLShapeConstants.MAX_RESPONSE_SHAPE_LENGTH) + "...";
       }
 
       return new ResponseShape(shape, counts[0], heavyFields);
@@ -145,7 +134,7 @@ public final class ResponseShapeAnalyzer {
       @Nonnull final String path,
       @Nonnull final PriorityQueue<HeavyField> heavyFieldsQueue) {
 
-    if (depth >= MAX_DEPTH) {
+    if (depth >= GraphQLShapeConstants.MAX_RESPONSE_DEPTH) {
       sb.append("...");
       return;
     }
@@ -160,10 +149,10 @@ public final class ResponseShapeAnalyzer {
       sb.append('[').append(size).append(']');
 
       // Track heavy fields (arrays with > 1 element) in priority queue
-      if (size > 1 && !path.isEmpty()) {
+      if (size >= GraphQLShapeConstants.RESPONSE_HEAVY_FIELD_MIN_SIZE && !path.isEmpty()) {
         heavyFieldsQueue.offer(new HeavyField(path, size));
         // Keep only top N arrays by size (min-heap: remove smallest)
-        if (heavyFieldsQueue.size() > TOP_HEAVY_FIELDS_LIMIT) {
+        if (heavyFieldsQueue.size() > GraphQLShapeConstants.TOP_HEAVY_FIELDS_LIMIT) {
           heavyFieldsQueue.poll();
         }
       }
@@ -173,7 +162,7 @@ public final class ResponseShapeAnalyzer {
       // Uses deterministic seeding based on path hash for reproducible shape hashing across runs.
       if (!list.isEmpty()) {
         Set<String> uniqueShapes = new LinkedHashSet<>();
-        int sampleSize = Math.min(SAMPLE_SIZE, list.size());
+        int sampleSize = Math.min(GraphQLShapeConstants.RESPONSE_SAMPLE_SIZE, list.size());
 
         // Use deterministic sampling based on path hash for reproducibility.
         // Same array at same path always produces same sample indices and shapes,

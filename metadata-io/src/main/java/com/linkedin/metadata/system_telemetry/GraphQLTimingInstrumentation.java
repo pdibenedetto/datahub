@@ -457,7 +457,8 @@ public class GraphQLTimingInstrumentation extends SimplePerformantInstrumentatio
 
       // Expensive: analyze response only if a threshold already crossed
       ResponseShapeAnalyzer.ResponseShape responseShape = ResponseShapeAnalyzer.analyze(result);
-      long responseBytesEstimate = (long) responseShape.getFieldCount() * 50;
+      long responseBytesEstimate =
+          (long) responseShape.getFieldCount() * GraphQLShapeConstants.BYTES_PER_FIELD_ESTIMATE;
       boolean responseSizeCrossed =
           responseBytesEstimate >= shapeLoggingConfig.getResponseSizeThresholdBytes();
 
