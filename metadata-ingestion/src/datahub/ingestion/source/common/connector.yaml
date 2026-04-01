@@ -1,3 +1,0 @@
-# Shared base — consumers found via import analysis.
-is_shared_base: true
-test_paths: []

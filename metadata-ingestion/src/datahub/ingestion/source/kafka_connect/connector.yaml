@@ -1,4 +1,0 @@
-# Exception: test dir uses hyphens (kafka-connect vs kafka_connect).
-test_path: tests/integration/kafka-connect/
-extra_test_paths:
-  - tests/integration/kafka-connect-confluent-cloud/

@@ -1,6 +1,0 @@
-# Shared base — changes here trigger all data lake connector tests.
-is_shared_base: true
-test_paths:
-  - tests/integration/s3/
-  - tests/integration/delta_lake/
-  - tests/integration/iceberg/

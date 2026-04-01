@@ -1,3 +1,0 @@
-# Exception: lookml tests are in a separate directory.
-extra_test_paths:
-  - tests/integration/lookml/

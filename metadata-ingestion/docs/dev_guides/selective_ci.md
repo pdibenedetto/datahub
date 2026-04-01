@@ -1,6 +1,6 @@
 # Selective CI for Integration Tests
 
-The selective CI system runs only the integration tests relevant to the connectors changed in a PR, instead of running all 8 integration test batches every time.
+The selective CI system runs only the integration tests relevant to the connectors changed in a PR, instead of running the full integration test suite every time.
 
 ## How it works
 
@@ -17,9 +17,19 @@ The `scripts/selective_ci_checks.py` script analyzes the list of changed files i
 
 ## Connector discovery
 
-Connectors are discovered automatically by **convention**: if `source/{name}/` exists and `tests/integration/{name}/` exists, the connector is registered with `test_path: tests/integration/{name}/`. No configuration needed.
+Connectors are discovered automatically through two complementary mechanisms:
 
-For the ~37 connectors where source and test directory names match (powerbi, bigquery_v2, snowflake, dbt, kafka, etc.), this just works.
+### 1. Convention-based discovery
+
+If `source/{name}/` exists and `tests/integration/{name}/` exists, the connector is registered automatically — no configuration needed.
+
+For single-file connectors (`source/feast.py`, etc.), the corresponding `tests/integration/feast/` directory is matched with exact-path semantics.
+
+### 2. Entry-point-based discovery
+
+For connectors whose source lives inside a **shared directory** (e.g. `source/sql/`, `source/usage/`), the system reads the `datahub.ingestion.source.plugins` entry points from `setup.py` to map each integration test directory to its source module. This enables **per-file narrowing**: changing `source/sql/clickhouse.py` runs only `tests/integration/clickhouse/`, not all other SQL connector tests.
+
+When a file in a shared directory has no entry-point match (e.g. `source/sql/sql_common.py`, which is a shared utility), narrowing is disabled for that change and the import graph is consulted instead — so all connectors that import from `sql/` get their tests triggered.
 
 ## When you need `connector.yaml`
 
@@ -30,8 +40,9 @@ A `connector.yaml` file in the source directory is only required for exceptions:
 If the test directory name differs from the source directory name:
 
 ```yaml
-# src/datahub/ingestion/source/redshift/connector.yaml
-test_path: tests/integration/redshift-usage/
+# Example: src/datahub/ingestion/source/myconnector/connector.yaml
+# (hypothetical — only needed when the test dir name doesn't match the source dir name)
+test_path: tests/integration/my-connector-tests/
 ```
 
 ### Extra source paths
@@ -49,26 +60,13 @@ extra_source_paths:
 If a connector's tests span multiple directories:
 
 ```yaml
-# src/datahub/ingestion/source/looker/connector.yaml
+# Example: src/datahub/ingestion/source/myconnector/connector.yaml
+# (hypothetical — only needed when a connector has more than one test directory)
 extra_test_paths:
-  - tests/integration/lookml/
+  - tests/integration/myconnector-extra/
 ```
 
-### Shared bases
-
-If a source directory is a shared base class used by many connectors (like `sql/`), it needs to declare the test directories for connectors whose source lives under it:
-
-```yaml
-# src/datahub/ingestion/source/sql/connector.yaml
-is_shared_base: true
-test_paths:
-  - tests/integration/clickhouse/
-  - tests/integration/mysql/
-  - tests/integration/postgres/
-  # ... etc
-```
-
-Connectors that have their own source directory (like `bigquery_v2/`) and import from `sql/` are handled automatically via import analysis — they don't need to be listed here.
+Connectors that live inside a shared source directory (like `source/sql/`) do **not** need a `connector.yaml` — their tests are discovered automatically via entry-point analysis.
 
 ## Adding a new connector
 
@@ -85,14 +83,15 @@ Create a `connector.yaml` in your source directory:
 test_path: tests/integration/my-connector-tests/
 ```
 
-### If your connector imports from a shared base
+### If your connector lives inside a shared source directory (e.g. `source/sql/`)
 
-Nothing to do. The import analysis will detect this automatically. When the shared base changes, your connector's tests will be triggered.
+Nothing to do. Register the connector as an entry point in `setup.py` — the selective CI system reads entry points automatically to map your connector to its test directory. When your connector's source file changes, only its tests run. When a shared utility (like `sql_common.py`) changes, the full set of SQL connector tests runs via import-graph analysis.
 
 ## Running the script locally
 
 ```bash
 # See what would run for a given set of changes
+# Requires a git checkout with origin/<base-ref> reachable (i.e. git fetch first)
 cd metadata-ingestion
 python scripts/selective_ci_checks.py --dry-run --base-ref master
 
@@ -122,13 +121,15 @@ This catches non-obvious dependencies like `dbt` importing `sql/sql_types.py` �
 - **Non-connector files** (api/, emitter/, setup.py, metadata-models/) always trigger the full suite.
 - The `run-all-tests` label on a PR forces the full suite regardless of changes.
 - If the detection script crashes, the gate job fails the PR — it never silently passes.
+- **Safety net**: if changed source directories produce no test matrix entries (e.g. a source dir with no test path and no entry-point coverage), the full suite runs with a warning — changed code is never silently untested.
 
 ## `connector.yaml` reference
 
-| Field                | Required              | Description                                                                           |
-| -------------------- | --------------------- | ------------------------------------------------------------------------------------- |
-| `test_path`          | No                    | Override the default test directory (default: `tests/integration/{source_dir_name}/`) |
-| `extra_source_paths` | No                    | Additional source directories covered by this connector's tests                       |
-| `extra_test_paths`   | No                    | Additional test directories for this connector                                        |
-| `is_shared_base`     | No                    | Mark as a shared base class (like `sql/`)                                             |
-| `test_paths`         | Only for shared bases | List of test directories to expand when this base changes                             |
+| Field                | Required | Description                                                                           |
+| -------------------- | -------- | ------------------------------------------------------------------------------------- |
+| `test_path`          | No       | Override the default test directory (default: `tests/integration/{source_dir_name}/`) |
+| `extra_source_paths` | No       | Additional source directories covered by this connector's tests                       |
+| `extra_test_paths`   | No       | Additional test directories for this connector                                        |
+| `test_paths`         | No       | Legacy list form of test directories (validate-only; prefer `test_path` + `extra_test_paths`) |
+
+Shared base directories (like `source/sql/`, `source/usage/`) no longer need a `connector.yaml` — entry-point analysis handles test discovery for all connectors within them automatically.

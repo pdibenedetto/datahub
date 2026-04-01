@@ -148,7 +148,7 @@ def kafka_connect_runner(docker_compose_runner, pytestconfig, test_resources_dir
 
 @pytest.fixture(scope="module")
 def test_resources_dir(pytestconfig):
-    return pytestconfig.rootpath / "tests/integration/kafka-connect"
+    return pytestconfig.rootpath / "tests/integration/kafka_connect"
 
 
 @pytest.fixture(scope="module")
